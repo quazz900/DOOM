@@ -52,6 +52,7 @@ int I_GetTime(void)
 void I_Init(void)
 {
     I_InitSound();
+    I_InitMusic();
 }
 
 void I_Quit(void)

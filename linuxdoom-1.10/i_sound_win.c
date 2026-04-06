@@ -77,6 +77,20 @@ static unsigned short MusReadLE16(const unsigned char *data)
     return (unsigned short)(data[0] | (data[1] << 8));
 }
 
+static int MixerVolumeFromDoom(int volume)
+{
+    if (volume < 0)
+        return 0;
+
+    if (volume <= 15)
+        volume *= 8;
+
+    if (volume > 127)
+        volume = 127;
+
+    return volume;
+}
+
 static int MidiChannelForMus(int mus_channel)
 {
     if (mus_channel == 15)
@@ -501,11 +515,13 @@ static int WriteMidiFile(const char *path, const unsigned char *midi_data, size_
 static void MusicApplyVolume(void)
 {
     DWORD volume;
+    int scaled_volume;
 
     if (!music_device_open)
         return;
 
-    volume = (DWORD)((snd_MusicVolume * 0xffff) / 127);
+    scaled_volume = MixerVolumeFromDoom(snd_MusicVolume);
+    volume = (DWORD)((scaled_volume * 0xffff) / 127);
     volume |= volume << 16;
     midiOutSetVolume(music_volume_device, volume);
 }
@@ -576,6 +592,8 @@ static int addsfx(int sfxid, int volume, int step, int separation)
     int slot;
     int rightvol;
     int leftvol;
+
+    volume = MixerVolumeFromDoom(volume);
 
     if (sfxid == sfx_sawup
         || sfxid == sfx_sawidl
@@ -815,6 +833,8 @@ void I_UpdateSoundParams(int handle, int vol, int sep, int pitch)
     int separation;
     int rightvol;
     int leftvol;
+
+    vol = MixerVolumeFromDoom(vol);
 
     for (i = 0; i < NUM_CHANNELS; ++i)
     {
