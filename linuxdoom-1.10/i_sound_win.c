@@ -50,6 +50,10 @@ static WAVEHDR sound_headers[AUDIO_BUFFER_COUNT];
 static unsigned char sound_buffers[AUDIO_BUFFER_COUNT][MIXBUFFER_BYTES];
 static int sound_buffer_ready[AUDIO_BUFFER_COUNT];
 static int sound_initialized;
+static unsigned char *sfx_wave_data[NUMSFX];
+static DWORD sfx_wave_size[NUMSFX];
+static int current_sound_handle;
+static int current_sound_endtic;
 
 typedef struct
 {
@@ -445,6 +449,9 @@ static int ConvertMusToMidi(const void *data, unsigned char **midi_data, size_t 
                 break;
             }
 
+            case 5:
+                break;
+
             case 6:
                 finished = 1;
                 break;
@@ -510,9 +517,50 @@ static int WriteMidiFile(const char *path, const unsigned char *midi_data, size_
     return 1;
 }
 
+static unsigned char *CreateWaveData(const unsigned char *samples, int sample_count, DWORD *wave_size)
+{
+    unsigned char *wave;
+    DWORD riff_size;
+    DWORD data_size;
+
+    data_size = (DWORD)sample_count;
+    *wave_size = 44 + data_size;
+    wave = (unsigned char *)malloc(*wave_size);
+    if (!wave)
+        return NULL;
+
+    riff_size = *wave_size - 8;
+
+    memcpy(wave + 0, "RIFF", 4);
+    memcpy(wave + 4, &riff_size, 4);
+    memcpy(wave + 8, "WAVEfmt ", 8);
+
+    {
+        DWORD fmt_size = 16;
+        WORD format = 1;
+        WORD channels_count = 1;
+        DWORD sample_rate = SAMPLERATE;
+        DWORD byte_rate = SAMPLERATE;
+        WORD block_align = 1;
+        WORD bits_per_sample = 8;
+
+        memcpy(wave + 16, &fmt_size, 4);
+        memcpy(wave + 20, &format, 2);
+        memcpy(wave + 22, &channels_count, 2);
+        memcpy(wave + 24, &sample_rate, 4);
+        memcpy(wave + 28, &byte_rate, 4);
+        memcpy(wave + 32, &block_align, 2);
+        memcpy(wave + 34, &bits_per_sample, 2);
+    }
+
+    memcpy(wave + 36, "data", 4);
+    memcpy(wave + 40, &data_size, 4);
+    memcpy(wave + 44, samples, data_size);
+    return wave;
+}
+
 static void MusicApplyVolume(void)
 {
-    snd_MusicVolume = MixerVolumeFromDoom(snd_MusicVolume);
 }
 
 static void MusicStopPlayback(void)
@@ -697,165 +745,77 @@ int I_GetSfxLumpNum(sfxinfo_t *sfx)
     return W_GetNumForName(namebuf);
 }
 
-int I_StartSound(int id, int vol, int sep, int pitch, int priority)
-{
-    priority = 0;
-    return addsfx(id, vol, steptable[pitch], sep);
-}
-
 void I_StopSound(int handle)
 {
-    int i;
-
-    for (i = 0; i < NUM_CHANNELS; ++i)
+    if (handle == current_sound_handle)
     {
-        if (channelhandles[i] == handle)
-        {
-            channels[i] = NULL;
-            channelsend[i] = NULL;
-            channelhandles[i] = 0;
-            break;
-        }
+        PlaySoundA(NULL, NULL, 0);
+        current_sound_handle = 0;
+        current_sound_endtic = 0;
     }
 }
 
 int I_SoundIsPlaying(int handle)
 {
-    int i;
-
-    for (i = 0; i < NUM_CHANNELS; ++i)
-        if (channelhandles[i] == handle && channels[i])
-            return 1;
-
-    return 0;
+    return handle == current_sound_handle && gametic < current_sound_endtic;
 }
 
 void I_UpdateSound(void)
 {
-    unsigned int sample;
-    int dl;
-    int dr;
-    signed short *leftout;
-    signed short *rightout;
-    signed short *leftend;
-    int step;
-    int chan;
-
-    leftout = mixbuffer;
-    rightout = mixbuffer + 1;
-    step = 2;
-    leftend = mixbuffer + SAMPLECOUNT * step;
-
-    while (leftout != leftend)
-    {
-        dl = 0;
-        dr = 0;
-
-        for (chan = 0; chan < NUM_CHANNELS; ++chan)
-        {
-            if (channels[chan])
-            {
-                sample = *channels[chan];
-                dl += channelleftvol_lookup[chan][sample];
-                dr += channelrightvol_lookup[chan][sample];
-                channelstepremainder[chan] += channelstep[chan];
-                channels[chan] += channelstepremainder[chan] >> 16;
-                channelstepremainder[chan] &= 65536 - 1;
-
-                if (channels[chan] >= channelsend[chan])
-                {
-                    channels[chan] = NULL;
-                    channelsend[chan] = NULL;
-                    channelhandles[chan] = 0;
-                }
-            }
-        }
-
-        if (dl > 0x7fff)
-            *leftout = 0x7fff;
-        else if (dl < -0x8000)
-            *leftout = -0x8000;
-        else
-            *leftout = (signed short)dl;
-
-        if (dr > 0x7fff)
-            *rightout = 0x7fff;
-        else if (dr < -0x8000)
-            *rightout = -0x8000;
-        else
-            *rightout = (signed short)dr;
-
-        leftout += step;
-        rightout += step;
-    }
 }
 
 void I_SubmitSound(void)
 {
-    int i;
-    MMRESULT result;
-
-    if (!sound_initialized)
-        return;
-
-    SoundReclaimBuffers();
-
-    for (i = 0; i < AUDIO_BUFFER_COUNT; ++i)
-    {
-        if (sound_buffer_ready[i])
-        {
-            memcpy(sound_buffers[i], mixbuffer, MIXBUFFER_BYTES);
-            sound_headers[i].dwBufferLength = MIXBUFFER_BYTES;
-            sound_headers[i].dwFlags &= ~WHDR_DONE;
-            sound_buffer_ready[i] = 0;
-            result = waveOutWrite(sound_device, &sound_headers[i], sizeof(WAVEHDR));
-            if (result != MMSYSERR_NOERROR)
-                sound_buffer_ready[i] = 1;
-            return;
-        }
-    }
 }
 
 void I_UpdateSoundParams(int handle, int vol, int sep, int pitch)
 {
-    int i;
-    int separation;
-    int rightvol;
-    int leftvol;
+    handle = vol = sep = pitch = 0;
+}
 
-    vol = MixerVolumeFromDoom(vol);
+static int I_StartSoundFallback(int id)
+{
+    static int next_handle = 100;
+    BOOL result;
+    int handle;
 
-    for (i = 0; i < NUM_CHANNELS; ++i)
-    {
-        if (channelhandles[i] == handle && channels[i])
-        {
-            channelstep[i] = steptable[pitch];
+    if (id <= 0 || id >= NUMSFX || !sfx_wave_data[id])
+        return 0;
 
-            separation = sep + 1;
-            leftvol = vol - ((vol * separation * separation) >> 16);
-            separation = separation - 257;
-            rightvol = vol - ((vol * separation * separation) >> 16);
+    result = PlaySoundA((LPCSTR)sfx_wave_data[id], NULL, SND_ASYNC | SND_MEMORY | SND_NODEFAULT);
+    if (!result)
+        return 0;
 
-            if (rightvol < 0)
-                rightvol = 0;
-            else if (rightvol > 127)
-                rightvol = 127;
+    handle = next_handle++;
+    current_sound_handle = handle;
+    current_sound_endtic = gametic + ((lengths[id] * TICRATE) / SAMPLERATE) + 1;
+    return handle;
+}
 
-            if (leftvol < 0)
-                leftvol = 0;
-            else if (leftvol > 127)
-                leftvol = 127;
-
-            channelleftvol_lookup[i] = &vol_lookup[leftvol * 256];
-            channelrightvol_lookup[i] = &vol_lookup[rightvol * 256];
-            return;
-        }
-    }
+int I_StartSound(int id, int vol, int sep, int pitch, int priority)
+{
+    vol = sep = pitch = priority = 0;
+    return I_StartSoundFallback(id);
 }
 
 void I_ShutdownSound(void)
 {
     int i;
+
+    PlaySoundA(NULL, NULL, 0);
+
+    for (i = 0; i < NUMSFX; ++i)
+    {
+        if (sfx_wave_data[i] && (!S_sfx[i].link || S_sfx[i].link->data != S_sfx[i].data))
+        {
+            free(sfx_wave_data[i]);
+            sfx_wave_data[i] = NULL;
+            sfx_wave_size[i] = 0;
+        }
+    }
+
+    current_sound_handle = 0;
+    current_sound_endtic = 0;
 
     if (!sound_initialized)
         return;
@@ -885,32 +845,36 @@ void I_InitSound(void)
     wave_format.nAvgBytesPerSec = wave_format.nSamplesPerSec * wave_format.nBlockAlign;
 
     result = waveOutOpen(&sound_device, WAVE_MAPPER, &wave_format, 0, 0, CALLBACK_NULL);
-    if (result != MMSYSERR_NOERROR)
+    if (result == MMSYSERR_NOERROR)
     {
-        fprintf(stderr, "I_InitSound: failed to open waveOut device\n");
-        return;
+        memset(sound_headers, 0, sizeof(sound_headers));
+        for (i = 0; i < AUDIO_BUFFER_COUNT; ++i)
+        {
+            sound_headers[i].lpData = (LPSTR)sound_buffers[i];
+            sound_headers[i].dwBufferLength = MIXBUFFER_BYTES;
+            result = waveOutPrepareHeader(sound_device, &sound_headers[i], sizeof(WAVEHDR));
+            if (result != MMSYSERR_NOERROR)
+            {
+                I_ShutdownSound();
+                break;
+            }
+            sound_buffer_ready[i] = 1;
+        }
+        sound_initialized = 1;
     }
 
-    memset(sound_headers, 0, sizeof(sound_headers));
-    for (i = 0; i < AUDIO_BUFFER_COUNT; ++i)
-    {
-        sound_headers[i].lpData = (LPSTR)sound_buffers[i];
-        sound_headers[i].dwBufferLength = MIXBUFFER_BYTES;
-        result = waveOutPrepareHeader(sound_device, &sound_headers[i], sizeof(WAVEHDR));
-        if (result != MMSYSERR_NOERROR)
-        {
-            fprintf(stderr, "I_InitSound: failed to prepare audio buffer\n");
-            I_ShutdownSound();
-            return;
-        }
-        sound_buffer_ready[i] = 1;
-    }
+    memset(sfx_wave_data, 0, sizeof(sfx_wave_data));
+    memset(sfx_wave_size, 0, sizeof(sfx_wave_size));
 
     for (i = 1; i < NUMSFX; ++i)
     {
         if (!S_sfx[i].link)
         {
-            S_sfx[i].data = getsfx(S_sfx[i].name, &lengths[i]);
+            unsigned char *raw;
+
+            raw = getsfx(S_sfx[i].name, &lengths[i]);
+            S_sfx[i].data = raw;
+            sfx_wave_data[i] = CreateWaveData(raw, lengths[i], &sfx_wave_size[i]);
         }
         else
         {
@@ -919,11 +883,12 @@ void I_InitSound(void)
             S_sfx[i].data = S_sfx[i].link->data;
             link_index = S_sfx[i].link - S_sfx;
             lengths[i] = lengths[link_index];
+            sfx_wave_data[i] = sfx_wave_data[link_index];
+            sfx_wave_size[i] = sfx_wave_size[link_index];
         }
     }
 
     memset(mixbuffer, 0, sizeof(mixbuffer));
-    sound_initialized = 1;
 }
 
 void I_InitMusic(void)

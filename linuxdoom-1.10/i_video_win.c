@@ -349,6 +349,13 @@ static void I_BlitFrame(HDC dc)
     RECT client_rect;
     int client_width;
     int client_height;
+    int scale_x;
+    int scale_y;
+    int scale;
+    int dest_width;
+    int dest_height;
+    int dest_x;
+    int dest_y;
     int i;
 
     if (!doom_window || !doom_framebuffer || !screens[0])
@@ -365,8 +372,21 @@ static void I_BlitFrame(HDC dc)
     client_width = client_rect.right - client_rect.left;
     client_height = client_rect.bottom - client_rect.top;
 
+    scale_x = client_width / SCREENWIDTH;
+    scale_y = client_height / SCREENHEIGHT;
+    scale = scale_x < scale_y ? scale_x : scale_y;
+    if (scale < 1)
+        scale = 1;
+
+    dest_width = SCREENWIDTH * scale;
+    dest_height = SCREENHEIGHT * scale;
+    dest_x = (client_width - dest_width) / 2;
+    dest_y = (client_height - dest_height) / 2;
+
+    SetStretchBltMode(dc, COLORONCOLOR);
+    PatBlt(dc, 0, 0, client_width, client_height, BLACKNESS);
     StretchDIBits(dc,
-                  0, 0, client_width, client_height,
+                  dest_x, dest_y, dest_width, dest_height,
                   0, 0, SCREENWIDTH, SCREENHEIGHT,
                   doom_framebuffer,
                   &doom_bitmap_info,
