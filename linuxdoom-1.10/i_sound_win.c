@@ -26,8 +26,7 @@ char *sndserver_filename = "";
 #define MIXBUFFER_BYTES (SAMPLECOUNT * BUFMUL)
 #define SAMPLERATE 11025
 #define AUDIO_BUFFER_COUNT 4
-#define MIDI_TICKS_PER_QUARTER 140
-#define MIDI_TEMPO_USEC 1000000UL
+#define MIDI_TICKS_PER_QUARTER 70
 #define MUSIC_ALIAS "doommusic"
 #define MUSIC_SONG_LIMIT 8
 
@@ -95,42 +94,7 @@ static int MixerVolumeFromDoom(int volume)
 
 static int MidiChannelForMus(int mus_channel)
 {
-    if (mus_channel == 15)
-        return 9;
-
-    if (mus_channel >= 9)
-        return mus_channel + 1;
-
     return mus_channel;
-}
-
-static int MidiControllerForMus(int controller)
-{
-    static const int controller_map[] = { -1, 0, 1, 7, 10, 11, 91, 93, 64, 67 };
-
-    if (controller < 1 || controller > 9)
-        return -1;
-
-    return controller_map[controller];
-}
-
-static int MidiSystemControllerForMus(int controller)
-{
-    switch (controller)
-    {
-    case 10:
-        return 120;
-    case 11:
-        return 123;
-    case 12:
-        return 126;
-    case 13:
-        return 127;
-    case 14:
-        return 121;
-    default:
-        return -1;
-    }
 }
 
 static int MidiEnsureCapacity(midi_buffer_t *buffer, size_t extra)
@@ -248,6 +212,24 @@ static int MidiAppendProgramChange(midi_buffer_t *buffer,
     return 1;
 }
 
+static int MidiAllocateChannel(const int channel_map[16])
+{
+    int i;
+    int max_channel;
+    int result;
+
+    max_channel = -1;
+    for (i = 0; i < 16; ++i)
+        if (channel_map[i] > max_channel)
+            max_channel = channel_map[i];
+
+    result = max_channel + 1;
+    if (result == 9)
+        ++result;
+
+    return result;
+}
+
 static unsigned long MusReadTime(const unsigned char *score, size_t score_length, size_t *position)
 {
     unsigned long time;
@@ -277,6 +259,11 @@ static int ConvertMusToMidi(const void *data, unsigned char **midi_data, size_t 
     midi_buffer_t track;
     midi_buffer_t midi;
     unsigned char channel_volume[16];
+    int channel_map[16];
+    static const unsigned char controller_map[] = {
+        0x00, 0x20, 0x01, 0x07, 0x0A, 0x0B, 0x5B, 0x5D,
+        0x40, 0x43, 0x78, 0x7B, 0x7E, 0x7F, 0x79
+    };
     unsigned long pending_delta;
     int finished;
     int status;
@@ -294,23 +281,14 @@ static int ConvertMusToMidi(const void *data, unsigned char **midi_data, size_t 
     memset(&midi, 0, sizeof(midi));
 
     for (i = 0; i < 16; ++i)
-        channel_volume[i] = 64;
+    {
+        channel_volume[i] = 127;
+        channel_map[i] = -1;
+    }
 
     pending_delta = 0;
     position = 0;
     finished = 0;
-
-    if (!MidiAppendVarLen(&track, 0)
-        || !MidiAppendByte(&track, 0xff)
-        || !MidiAppendByte(&track, 0x51)
-        || !MidiAppendByte(&track, 0x03)
-        || !MidiAppendByte(&track, (unsigned char)((MIDI_TEMPO_USEC >> 16) & 0xff))
-        || !MidiAppendByte(&track, (unsigned char)((MIDI_TEMPO_USEC >> 8) & 0xff))
-        || !MidiAppendByte(&track, (unsigned char)(MIDI_TEMPO_USEC & 0xff)))
-    {
-        free(track.data);
-        return 0;
-    }
 
     while (!finished && position < score_length)
     {
@@ -332,9 +310,29 @@ static int ConvertMusToMidi(const void *data, unsigned char **midi_data, size_t 
             event = score[position++];
             event_type = (event >> 4) & 0x07;
             mus_channel = event & 0x0f;
-            midi_channel = MidiChannelForMus(mus_channel);
             delta = first_event ? group_delta : 0;
             first_event = 0;
+
+            if (mus_channel == 15)
+            {
+                midi_channel = 9;
+            }
+            else
+            {
+                if (channel_map[mus_channel] == -1)
+                {
+                    channel_map[mus_channel] = MidiAllocateChannel(channel_map);
+                    if (!MidiAppendShortEvent(&track,
+                                              delta,
+                                              (unsigned char)(0xb0 | channel_map[mus_channel]),
+                                              0x7b,
+                                              0x00))
+                        goto fail;
+                    delta = 0;
+                }
+
+                midi_channel = channel_map[mus_channel];
+            }
 
             switch (event_type)
             {
@@ -395,26 +393,6 @@ static int ConvertMusToMidi(const void *data, unsigned char **midi_data, size_t 
                 break;
             }
 
-            case 3:
-            {
-                int controller;
-                int midi_controller;
-
-                controller = score[position++] & 0x7f;
-                midi_controller = MidiSystemControllerForMus(controller);
-                if (midi_controller < 0)
-                    goto fail;
-
-                status = MidiAppendShortEvent(&track,
-                                              delta,
-                                              (unsigned char)(0xb0 | midi_channel),
-                                              (unsigned char)midi_controller,
-                                              (unsigned char)((controller == 12) ? 1 : 0));
-                if (!status)
-                    goto fail;
-                break;
-            }
-
             case 4:
             {
                 int controller;
@@ -433,14 +411,13 @@ static int ConvertMusToMidi(const void *data, unsigned char **midi_data, size_t 
                 }
                 else
                 {
-                    midi_controller = MidiControllerForMus(controller);
-                    if (midi_controller < 0)
+                    if (controller < 1 || controller > 9)
                         goto fail;
 
                     status = MidiAppendShortEvent(&track,
                                                   delta,
                                                   (unsigned char)(0xb0 | midi_channel),
-                                                  (unsigned char)midi_controller,
+                                                  controller_map[controller],
                                                   (unsigned char)value);
                 }
 
@@ -451,6 +428,24 @@ static int ConvertMusToMidi(const void *data, unsigned char **midi_data, size_t 
 
             case 5:
                 break;
+
+            case 3:
+            {
+                int controller;
+
+                controller = score[position++] & 0x7f;
+                if (controller < 10 || controller > 14)
+                    goto fail;
+
+                status = MidiAppendShortEvent(&track,
+                                              delta,
+                                              (unsigned char)(0xb0 | midi_channel),
+                                              controller_map[controller],
+                                              0x00);
+                if (!status)
+                    goto fail;
+                break;
+            }
 
             case 6:
                 finished = 1;
