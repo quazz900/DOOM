@@ -488,10 +488,12 @@ void I_InitGraphics(void)
         return;
 
     memset(&window_class, 0, sizeof(window_class));
+    window_class.style = CS_OWNDC;
     window_class.lpfnWndProc = I_WindowProc;
     window_class.hInstance = GetModuleHandle(NULL);
     window_class.lpszClassName = window_class_name;
     window_class.hCursor = LoadCursor(NULL, IDC_ARROW);
+    window_class.hbrBackground = NULL;
 
     RegisterClass(&window_class);
 

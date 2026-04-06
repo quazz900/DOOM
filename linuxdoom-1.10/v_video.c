@@ -459,6 +459,10 @@ V_DrawPatchScaled
     int col;
     int dx;
     int dy;
+    int crop_x;
+    int crop_y;
+    int crop_width;
+    int crop_height;
 
     if (!patch || width <= 0 || height <= 0)
         return;
@@ -470,6 +474,30 @@ V_DrawPatchScaled
 
     if (src_width <= 0 || src_height <= 0)
         return;
+
+    crop_x = 0;
+    crop_y = 0;
+    crop_width = src_width;
+    crop_height = src_height;
+
+    if ((long)src_width * height > (long)width * src_height)
+    {
+        crop_width = (width * src_height) / height;
+        if (crop_width < 1)
+            crop_width = 1;
+        if (crop_width > src_width)
+            crop_width = src_width;
+        crop_x = (src_width - crop_width) / 2;
+    }
+    else if ((long)src_width * height < (long)width * src_height)
+    {
+        crop_height = (height * src_width) / width;
+        if (crop_height < 1)
+            crop_height = 1;
+        if (crop_height > src_height)
+            crop_height = src_height;
+        crop_y = (src_height - crop_height) / 2;
+    }
 
     decoded = (short *)malloc(sizeof(*decoded) * src_width * src_height);
     if (!decoded)
@@ -509,7 +537,7 @@ V_DrawPatchScaled
         if (screen_y < 0 || screen_y >= SCREENHEIGHT)
             continue;
 
-        src_y = (dy * src_height) / height;
+        src_y = crop_y + (dy * crop_height) / height;
 
         for (dx = 0; dx < width; ++dx)
         {
@@ -520,7 +548,7 @@ V_DrawPatchScaled
             if (screen_x < 0 || screen_x >= SCREENWIDTH)
                 continue;
 
-            src_x = (dx * src_width) / width;
+            src_x = crop_x + (dx * crop_width) / width;
             pixel = decoded[src_y * src_width + src_x];
 
             if (pixel >= 0)
