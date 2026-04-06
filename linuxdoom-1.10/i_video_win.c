@@ -20,12 +20,17 @@ static uint32_t *doom_framebuffer;
 static byte current_palette[256 * 3];
 static int window_scale = 2;
 static int mouse_initialized;
-static int mouse_last_x;
-static int mouse_last_y;
 static int mouse_buttons;
+static int mouse_captured;
+static int mouse_ignore_move;
+static int mouse_center_x;
+static int mouse_center_y;
 
 static void I_BlitFrame(HDC dc);
 static void I_PostMouseEvent(int buttons, int delta_x, int delta_y);
+static void I_UpdateMouseCenter(void);
+static void I_SetMouseCapture(boolean capture);
+static void I_RecenterMouse(void);
 
 static int I_TranslateKey(WPARAM key)
 {
@@ -144,6 +149,74 @@ static void I_PostMouseEvent(int buttons, int delta_x, int delta_y)
     D_PostEvent(&event);
 }
 
+static void I_UpdateMouseCenter(void)
+{
+    RECT rect;
+
+    if (!doom_window)
+        return;
+
+    GetClientRect(doom_window, &rect);
+    mouse_center_x = (rect.right - rect.left) / 2;
+    mouse_center_y = (rect.bottom - rect.top) / 2;
+}
+
+static void I_RecenterMouse(void)
+{
+    POINT point;
+
+    if (!doom_window || !mouse_captured)
+        return;
+
+    I_UpdateMouseCenter();
+    point.x = mouse_center_x;
+    point.y = mouse_center_y;
+    ClientToScreen(doom_window, &point);
+    mouse_ignore_move = 1;
+    SetCursorPos(point.x, point.y);
+}
+
+static void I_SetMouseCapture(boolean capture)
+{
+    RECT rect;
+    POINT top_left;
+    POINT bottom_right;
+
+    if (!doom_window || mouse_captured == capture)
+        return;
+
+    mouse_captured = capture;
+    mouse_initialized = 0;
+
+    if (capture)
+    {
+        GetClientRect(doom_window, &rect);
+        top_left.x = rect.left;
+        top_left.y = rect.top;
+        bottom_right.x = rect.right;
+        bottom_right.y = rect.bottom;
+        ClientToScreen(doom_window, &top_left);
+        ClientToScreen(doom_window, &bottom_right);
+        rect.left = top_left.x;
+        rect.top = top_left.y;
+        rect.right = bottom_right.x;
+        rect.bottom = bottom_right.y;
+
+        ClipCursor(&rect);
+        SetCapture(doom_window);
+        while (ShowCursor(FALSE) >= 0)
+            ;
+        I_RecenterMouse();
+    }
+    else
+    {
+        ClipCursor(NULL);
+        ReleaseCapture();
+        while (ShowCursor(TRUE) < 0)
+            ;
+    }
+}
+
 static LRESULT CALLBACK I_WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
     PAINTSTRUCT paint;
@@ -161,6 +234,18 @@ static LRESULT CALLBACK I_WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPA
         PostQuitMessage(0);
         return 0;
 
+    case WM_ACTIVATE:
+        I_SetMouseCapture(LOWORD(wparam) != WA_INACTIVE);
+        return 0;
+
+    case WM_SETFOCUS:
+        I_SetMouseCapture(true);
+        return 0;
+
+    case WM_KILLFOCUS:
+        I_SetMouseCapture(false);
+        return 0;
+
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
         if ((HIWORD(lparam) & KF_REPEAT) == 0)
@@ -175,7 +260,6 @@ static LRESULT CALLBACK I_WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPA
     case WM_LBUTTONDOWN:
     case WM_RBUTTONDOWN:
     case WM_MBUTTONDOWN:
-        SetCapture(hwnd);
         mouse_buttons = I_MouseButtonsFromWParam(wparam);
         I_PostMouseEvent(mouse_buttons, 0, 0);
         return 0;
@@ -185,33 +269,52 @@ static LRESULT CALLBACK I_WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPA
     case WM_MBUTTONUP:
         mouse_buttons = I_MouseButtonsFromWParam(wparam);
         I_PostMouseEvent(mouse_buttons, 0, 0);
-        if (!mouse_buttons)
-            ReleaseCapture();
         return 0;
 
     case WM_MOUSEMOVE:
     {
         int x = GET_X_LPARAM(lparam);
         int y = GET_Y_LPARAM(lparam);
+        int delta_x;
+        int delta_y;
+
+        if (mouse_ignore_move)
+        {
+            mouse_ignore_move = 0;
+            return 0;
+        }
 
         if (!mouse_initialized)
         {
-            mouse_last_x = x;
-            mouse_last_y = y;
             mouse_initialized = 1;
+            if (mouse_captured)
+                I_RecenterMouse();
+        }
+
+        if (mouse_captured)
+        {
+            delta_x = (x - mouse_center_x) << 2;
+            delta_y = (mouse_center_y - y) << 2;
         }
         else
         {
-            int delta_x = (x - mouse_last_x) << 2;
-            int delta_y = (mouse_last_y - y) << 2;
+            static int last_x;
+            static int last_y;
 
-            mouse_last_x = x;
-            mouse_last_y = y;
-            mouse_buttons = I_MouseButtonsFromWParam(wparam);
-
-            if (delta_x || delta_y)
-                I_PostMouseEvent(mouse_buttons, delta_x, delta_y);
+            delta_x = (x - last_x) << 2;
+            delta_y = (last_y - y) << 2;
+            last_x = x;
+            last_y = y;
         }
+
+        mouse_buttons = I_MouseButtonsFromWParam(wparam);
+
+        if (delta_x || delta_y)
+            I_PostMouseEvent(mouse_buttons, delta_x, delta_y);
+
+        if (mouse_captured)
+            I_RecenterMouse();
+
         return 0;
     }
 
@@ -244,7 +347,7 @@ static void I_BlitFrame(HDC dc)
     {
         byte color_index = screens[0][i];
         byte *color = &current_palette[color_index * 3];
-        doom_framebuffer[i] = ((uint32_t)color[2] << 16) | ((uint32_t)color[1] << 8) | color[0];
+        doom_framebuffer[i] = ((uint32_t)color[0] << 16) | ((uint32_t)color[1] << 8) | color[2];
     }
 
     GetClientRect(doom_window, &client_rect);
@@ -264,12 +367,14 @@ void I_ShutdownGraphics(void)
 {
     if (doom_window)
     {
+        I_SetMouseCapture(false);
         DestroyWindow(doom_window);
         doom_window = NULL;
     }
 
     mouse_initialized = 0;
     mouse_buttons = 0;
+    mouse_ignore_move = 0;
 
     if (doom_framebuffer)
     {
@@ -371,6 +476,9 @@ void I_InitGraphics(void)
 
     ShowWindow(doom_window, SW_SHOWDEFAULT);
     UpdateWindow(doom_window);
+    SetForegroundWindow(doom_window);
+    I_UpdateMouseCenter();
+    I_SetMouseCapture(true);
 
     doom_framebuffer = (uint32_t *)malloc(sizeof(*doom_framebuffer) * SCREENWIDTH * SCREENHEIGHT);
     if (!doom_framebuffer)
