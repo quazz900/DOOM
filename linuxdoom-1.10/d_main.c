@@ -443,8 +443,8 @@ void D_PageTicker (void)
 //
 void D_PageDrawer (void)
 {
-    memset(screens[0], 0, SCREENWIDTH * SCREENHEIGHT);
-    V_DrawPatch (0,0, 0, W_CacheLumpName(pagename, PU_CACHE));
+    V_DrawPatchScaled (0,0, 0, W_CacheLumpName(pagename, PU_CACHE),
+		       SCREENWIDTH, SCREENHEIGHT);
 }
 
 

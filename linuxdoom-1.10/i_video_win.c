@@ -456,11 +456,17 @@ void I_UpdateNoBlit(void)
 
 void I_FinishUpdate(void)
 {
+    HDC dc;
+
     if (!doom_window)
         return;
 
-    InvalidateRect(doom_window, NULL, FALSE);
-    UpdateWindow(doom_window);
+    dc = GetDC(doom_window);
+    if (!dc)
+        return;
+
+    I_BlitFrame(dc);
+    ReleaseDC(doom_window, dc);
 }
 
 void I_ReadScreen(byte *scr)

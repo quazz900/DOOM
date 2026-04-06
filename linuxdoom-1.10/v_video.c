@@ -38,6 +38,7 @@ rcsid[] = "$Id: v_video.c,v 1.5 1997/02/03 22:45:13 b1 Exp $";
 #include "m_swap.h"
 
 #include "v_video.h"
+#include <stdlib.h>
 
 
 // Each screen is [SCREENWIDTH*SCREENHEIGHT]; 
@@ -440,6 +441,95 @@ V_DrawPatchDirect
 	    desttop++;	// go to next byte, not next plane 
     }*/ 
 } 
+
+void
+V_DrawPatchScaled
+( int		x,
+  int		y,
+  int		scrn,
+  patch_t*	patch,
+  int		width,
+  int		height )
+{
+    int src_width;
+    int src_height;
+    int drawx;
+    int drawy;
+    short *decoded;
+    int col;
+    int dx;
+    int dy;
+
+    if (!patch || width <= 0 || height <= 0)
+        return;
+
+    src_width = SHORT(patch->width);
+    src_height = SHORT(patch->height);
+    drawx = x - SHORT(patch->leftoffset);
+    drawy = y - SHORT(patch->topoffset);
+
+    if (src_width <= 0 || src_height <= 0)
+        return;
+
+    decoded = (short *)malloc(sizeof(*decoded) * src_width * src_height);
+    if (!decoded)
+    {
+        V_DrawPatch(x, y, scrn, patch);
+        return;
+    }
+
+    for (dy = 0; dy < src_width * src_height; ++dy)
+        decoded[dy] = -1;
+
+    for (col = 0; col < src_width; ++col)
+    {
+        column_t *column = (column_t *)((byte *)patch + LONG(patch->columnofs[col]));
+
+        while (column->topdelta != 0xff)
+        {
+            int row = column->topdelta;
+            int count = column->length;
+            byte *source = (byte *)column + 3;
+
+            while (count-- && row < src_height)
+                decoded[row++ * src_width + col] = *source++;
+
+            column = (column_t *)((byte *)column + column->length + 4);
+        }
+    }
+
+    if (!scrn)
+        V_MarkRect(drawx, drawy, width, height);
+
+    for (dy = 0; dy < height; ++dy)
+    {
+        int screen_y = drawy + dy;
+        int src_y;
+
+        if (screen_y < 0 || screen_y >= SCREENHEIGHT)
+            continue;
+
+        src_y = (dy * src_height) / height;
+
+        for (dx = 0; dx < width; ++dx)
+        {
+            int screen_x = drawx + dx;
+            int src_x;
+            short pixel;
+
+            if (screen_x < 0 || screen_x >= SCREENWIDTH)
+                continue;
+
+            src_x = (dx * src_width) / width;
+            pixel = decoded[src_y * src_width + src_x];
+
+            if (pixel >= 0)
+                screens[scrn][screen_y * SCREENWIDTH + screen_x] = (byte)pixel;
+        }
+    }
+
+    free(decoded);
+}
  
 
 

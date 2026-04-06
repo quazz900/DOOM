@@ -713,13 +713,15 @@ void F_Drawer (void)
 	{
 	  case 1:
 	    if ( gamemode == retail )
-	      V_DrawPatch (0,0,0,
-			 W_CacheLumpName("CREDIT",PU_CACHE));
+	      V_DrawPatchScaled (0,0,0,
+				 W_CacheLumpName("CREDIT",PU_CACHE),
+				 SCREENWIDTH, SCREENHEIGHT);
 	    else
-	      V_DrawPatch (0,0,0,
-			 W_CacheLumpName(W_CheckNumForName("HELP2") != -1 ? "HELP2" :
-					(W_CheckNumForName("HELP1") != -1 ? "HELP1" : "CREDIT"),
-					PU_CACHE));
+	      V_DrawPatchScaled (0,0,0,
+				 W_CacheLumpName(W_CheckNumForName("HELP2") != -1 ? "HELP2" :
+						(W_CheckNumForName("HELP1") != -1 ? "HELP1" : "CREDIT"),
+						PU_CACHE),
+				 SCREENWIDTH, SCREENHEIGHT);
 	    break;
 	  case 2:
 	    V_DrawPatch(0,0,0,

@@ -501,8 +501,7 @@ void ST_refreshBackground(void)
 
     if (st_statusbaron)
     {
-        memset(screens[BG], 0, ST_WIDTH * ST_HEIGHT);
-	V_DrawPatch(ST_X, 0, BG, sbar);
+	V_DrawPatchScaled(ST_X, 0, BG, sbar, ST_WIDTH, ST_HEIGHT);
 
 	if (netgame)
 	    V_DrawPatch(ST_FX, 0, BG, faceback);

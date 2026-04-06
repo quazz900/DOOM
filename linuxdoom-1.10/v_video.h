@@ -82,6 +82,15 @@ V_DrawPatchDirect
   int		scrn,
   patch_t*	patch );
 
+void
+V_DrawPatchScaled
+( int		x,
+  int		y,
+  int		scrn,
+  patch_t*	patch,
+  int		width,
+  int		height );
+
 
 // Draw a linear block of pixels into the view buffer.
 void

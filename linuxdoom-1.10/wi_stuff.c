@@ -1555,7 +1555,7 @@ void WI_loadData(void)
 
     // background
     bg = W_CacheLumpName(name, PU_CACHE);    
-    V_DrawPatch(0, 0, 1, bg);
+    V_DrawPatchScaled(0, 0, 1, bg, SCREENWIDTH, SCREENHEIGHT);
 
 
     // UNUSED unsigned char *pic = screens[1];
