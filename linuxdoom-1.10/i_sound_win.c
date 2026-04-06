@@ -918,6 +918,33 @@ static void SoundReclaimBuffers(void)
     }
 }
 
+static void SoundSetChannelParams(int slot, int volume, int separation, int step)
+{
+    int rightvol;
+    int leftvol;
+
+    volume = MixerVolumeFromDoom(volume);
+
+    separation += 1;
+    leftvol = volume - ((volume * separation * separation) >> 16);
+    separation = separation - 257;
+    rightvol = volume - ((volume * separation * separation) >> 16);
+
+    if (rightvol < 0)
+        rightvol = 0;
+    else if (rightvol > 127)
+        rightvol = 127;
+
+    if (leftvol < 0)
+        leftvol = 0;
+    else if (leftvol > 127)
+        leftvol = 127;
+
+    channelleftvol_lookup[slot] = &vol_lookup[leftvol * 256];
+    channelrightvol_lookup[slot] = &vol_lookup[rightvol * 256];
+    channelstep[slot] = step;
+}
+
 static void *getsfx(char *sfxname, int *len)
 {
     unsigned char *sfx;
@@ -959,11 +986,6 @@ static int addsfx(int sfxid, int volume, int step, int separation)
     int oldest;
     int oldestnum;
     int slot;
-    int rightvol;
-    int leftvol;
-
-    volume = MixerVolumeFromDoom(volume);
-
     if (sfxid == sfx_sawup
         || sfxid == sfx_sawidl
         || sfxid == sfx_sawful
@@ -1003,27 +1025,9 @@ static int addsfx(int sfxid, int volume, int step, int separation)
         handlenums = 100;
 
     channelhandles[slot] = handlenums++;
-    channelstep[slot] = step;
     channelstepremainder[slot] = 0;
     channelstart[slot] = gametic;
-
-    separation += 1;
-    leftvol = volume - ((volume * separation * separation) >> 16);
-    separation = separation - 257;
-    rightvol = volume - ((volume * separation * separation) >> 16);
-
-    if (rightvol < 0)
-        rightvol = 0;
-    else if (rightvol > 127)
-        rightvol = 127;
-
-    if (leftvol < 0)
-        leftvol = 0;
-    else if (leftvol > 127)
-        leftvol = 127;
-
-    channelleftvol_lookup[slot] = &vol_lookup[leftvol * 256];
-    channelrightvol_lookup[slot] = &vol_lookup[rightvol * 256];
+    SoundSetChannelParams(slot, volume, separation, step);
     channelids[slot] = sfxid;
 
     return channelhandles[slot];
@@ -1079,58 +1083,146 @@ int I_GetSfxLumpNum(sfxinfo_t *sfx)
 
 void I_StopSound(int handle)
 {
-    if (handle == current_sound_handle)
+    int i;
+
+    for (i = 0; i < NUM_CHANNELS; ++i)
     {
-        PlaySoundA(NULL, NULL, 0);
-        current_sound_handle = 0;
-        current_sound_endtic = 0;
+        if (channelhandles[i] == handle)
+        {
+            channels[i] = NULL;
+            channelsend[i] = NULL;
+            channelhandles[i] = 0;
+            channelids[i] = 0;
+            break;
+        }
     }
 }
 
 int I_SoundIsPlaying(int handle)
 {
-    return handle == current_sound_handle && gametic < current_sound_endtic;
+    int i;
+
+    for (i = 0; i < NUM_CHANNELS; ++i)
+        if (channelhandles[i] == handle && channels[i])
+            return 1;
+
+    return 0;
 }
 
 void I_UpdateSound(void)
 {
+    register unsigned int sample;
+    register int dl;
+    register int dr;
+    signed short *leftout;
+    signed short *rightout;
+    signed short *leftend;
+    int step;
+    int chan;
+
+    leftout = mixbuffer;
+    rightout = mixbuffer + 1;
+    step = 2;
+    leftend = mixbuffer + SAMPLECOUNT * step;
+
+    while (leftout != leftend)
+    {
+        dl = 0;
+        dr = 0;
+
+        for (chan = 0; chan < NUM_CHANNELS; ++chan)
+        {
+            if (channels[chan])
+            {
+                sample = *channels[chan];
+                dl += channelleftvol_lookup[chan][sample];
+                dr += channelrightvol_lookup[chan][sample];
+                channelstepremainder[chan] += channelstep[chan];
+                channels[chan] += channelstepremainder[chan] >> 16;
+                channelstepremainder[chan] &= 65536 - 1;
+
+                if (channels[chan] >= channelsend[chan])
+                {
+                    channels[chan] = NULL;
+                    channelsend[chan] = NULL;
+                    channelhandles[chan] = 0;
+                    channelids[chan] = 0;
+                }
+            }
+        }
+
+        if (dl > 0x7fff)
+            *leftout = 0x7fff;
+        else if (dl < -0x8000)
+            *leftout = -0x8000;
+        else
+            *leftout = (signed short)dl;
+
+        if (dr > 0x7fff)
+            *rightout = 0x7fff;
+        else if (dr < -0x8000)
+            *rightout = -0x8000;
+        else
+            *rightout = (signed short)dr;
+
+        leftout += step;
+        rightout += step;
+    }
 }
 
 void I_SubmitSound(void)
 {
+    int i;
+    MMRESULT result;
+
+    if (!sound_initialized)
+        return;
+
+    SoundReclaimBuffers();
+
+    for (i = 0; i < AUDIO_BUFFER_COUNT; ++i)
+    {
+        if (sound_buffer_ready[i])
+        {
+            memcpy(sound_buffers[i], mixbuffer, MIXBUFFER_BYTES);
+            sound_headers[i].dwBufferLength = MIXBUFFER_BYTES;
+            sound_headers[i].dwFlags &= ~WHDR_DONE;
+            sound_buffer_ready[i] = 0;
+            result = waveOutWrite(sound_device, &sound_headers[i], sizeof(WAVEHDR));
+            if (result != MMSYSERR_NOERROR)
+                sound_buffer_ready[i] = 1;
+            return;
+        }
+    }
 }
 
 void I_UpdateSoundParams(int handle, int vol, int sep, int pitch)
 {
-    handle = vol = sep = pitch = 0;
+    int i;
+
+    for (i = 0; i < NUM_CHANNELS; ++i)
+    {
+        if (channelhandles[i] == handle && channels[i])
+        {
+            SoundSetChannelParams(i, vol, sep, steptable[pitch]);
+            break;
+        }
+    }
 }
 
 int I_StartSound(int id, int vol, int sep, int pitch, int priority)
 {
-    static int next_handle = 100;
-    BOOL result;
-    int handle;
+    priority = 0;
 
-    vol = sep = pitch = priority = 0;
-
-    if (id <= 0 || id >= NUMSFX || !sfx_wave_data[id])
+    if (id <= 0 || id >= NUMSFX || !S_sfx[id].data)
         return 0;
 
-    result = PlaySoundA((LPCSTR)sfx_wave_data[id], NULL, SND_ASYNC | SND_MEMORY | SND_NODEFAULT);
-    if (!result)
-        return 0;
-
-    handle = next_handle++;
-    current_sound_handle = handle;
-    current_sound_endtic = gametic + ((lengths[id] * TICRATE) / SAMPLERATE) + 1;
-    return handle;
+    return addsfx(id, vol, steptable[pitch], sep);
 }
 
 void I_ShutdownSound(void)
 {
     int i;
-
-    PlaySoundA(NULL, NULL, 0);
 
     for (i = 0; i < NUMSFX; ++i)
     {
@@ -1141,9 +1233,6 @@ void I_ShutdownSound(void)
             sfx_wave_size[i] = 0;
         }
     }
-
-    current_sound_handle = 0;
-    current_sound_endtic = 0;
 
     if (!sound_initialized)
         return;
@@ -1175,6 +1264,7 @@ void I_InitSound(void)
     result = waveOutOpen(&sound_device, WAVE_MAPPER, &wave_format, 0, 0, CALLBACK_NULL);
     if (result == MMSYSERR_NOERROR)
     {
+        I_SetChannels();
         memset(sound_headers, 0, sizeof(sound_headers));
         for (i = 0; i < AUDIO_BUFFER_COUNT; ++i)
         {
