@@ -1,5 +1,6 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <windowsx.h>
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -18,8 +19,13 @@ static BITMAPINFO doom_bitmap_info;
 static uint32_t *doom_framebuffer;
 static byte current_palette[256 * 3];
 static int window_scale = 2;
+static int mouse_initialized;
+static int mouse_last_x;
+static int mouse_last_y;
+static int mouse_buttons;
 
 static void I_BlitFrame(HDC dc);
+static void I_PostMouseEvent(int buttons, int delta_x, int delta_y);
 
 static int I_TranslateKey(WPARAM key)
 {
@@ -113,6 +119,31 @@ static void I_PostKeyEvent(evtype_t type, WPARAM key)
     D_PostEvent(&event);
 }
 
+static int I_MouseButtonsFromWParam(WPARAM wparam)
+{
+    int buttons = 0;
+
+    if (wparam & MK_LBUTTON)
+        buttons |= 1;
+    if (wparam & MK_RBUTTON)
+        buttons |= 2;
+    if (wparam & MK_MBUTTON)
+        buttons |= 4;
+
+    return buttons;
+}
+
+static void I_PostMouseEvent(int buttons, int delta_x, int delta_y)
+{
+    event_t event;
+
+    event.type = ev_mouse;
+    event.data1 = buttons;
+    event.data2 = delta_x;
+    event.data3 = delta_y;
+    D_PostEvent(&event);
+}
+
 static LRESULT CALLBACK I_WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
     PAINTSTRUCT paint;
@@ -139,6 +170,53 @@ static LRESULT CALLBACK I_WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPA
     case WM_KEYUP:
     case WM_SYSKEYUP:
         I_PostKeyEvent(ev_keyup, wparam);
+        return 0;
+
+    case WM_LBUTTONDOWN:
+    case WM_RBUTTONDOWN:
+    case WM_MBUTTONDOWN:
+        SetCapture(hwnd);
+        mouse_buttons = I_MouseButtonsFromWParam(wparam);
+        I_PostMouseEvent(mouse_buttons, 0, 0);
+        return 0;
+
+    case WM_LBUTTONUP:
+    case WM_RBUTTONUP:
+    case WM_MBUTTONUP:
+        mouse_buttons = I_MouseButtonsFromWParam(wparam);
+        I_PostMouseEvent(mouse_buttons, 0, 0);
+        if (!mouse_buttons)
+            ReleaseCapture();
+        return 0;
+
+    case WM_MOUSEMOVE:
+    {
+        int x = GET_X_LPARAM(lparam);
+        int y = GET_Y_LPARAM(lparam);
+
+        if (!mouse_initialized)
+        {
+            mouse_last_x = x;
+            mouse_last_y = y;
+            mouse_initialized = 1;
+        }
+        else
+        {
+            int delta_x = (x - mouse_last_x) << 2;
+            int delta_y = (mouse_last_y - y) << 2;
+
+            mouse_last_x = x;
+            mouse_last_y = y;
+            mouse_buttons = I_MouseButtonsFromWParam(wparam);
+
+            if (delta_x || delta_y)
+                I_PostMouseEvent(mouse_buttons, delta_x, delta_y);
+        }
+        return 0;
+    }
+
+    case WM_MOUSELEAVE:
+        mouse_initialized = 0;
         return 0;
 
     case WM_PAINT:
@@ -190,6 +268,9 @@ void I_ShutdownGraphics(void)
         doom_window = NULL;
     }
 
+    mouse_initialized = 0;
+    mouse_buttons = 0;
+
     if (doom_framebuffer)
     {
         free(doom_framebuffer);
@@ -204,6 +285,7 @@ void I_StartFrame(void)
 void I_StartTic(void)
 {
     MSG message;
+    TRACKMOUSEEVENT track;
 
     while (PeekMessage(&message, NULL, 0, 0, PM_REMOVE))
     {
@@ -212,6 +294,15 @@ void I_StartTic(void)
 
         TranslateMessage(&message);
         DispatchMessage(&message);
+    }
+
+    if (doom_window)
+    {
+        track.cbSize = sizeof(track);
+        track.dwFlags = TME_LEAVE;
+        track.hwndTrack = doom_window;
+        track.dwHoverTime = 0;
+        TrackMouseEvent(&track);
     }
 }
 
