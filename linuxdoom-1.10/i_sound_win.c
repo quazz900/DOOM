@@ -918,6 +918,31 @@ static void SoundReclaimBuffers(void)
     }
 }
 
+static void CALLBACK SoundWaveOutProc(HWAVEOUT hwo,
+                                      UINT uMsg,
+                                      DWORD_PTR dwInstance,
+                                      DWORD_PTR dwParam1,
+                                      DWORD_PTR dwParam2)
+{
+    int i;
+
+    hwo = hwo;
+    dwInstance = dwInstance;
+    dwParam2 = dwParam2;
+
+    if (uMsg != WOM_DONE)
+        return;
+
+    for (i = 0; i < AUDIO_BUFFER_COUNT; ++i)
+    {
+        if ((WAVEHDR *)dwParam1 == &sound_headers[i])
+        {
+            sound_buffer_ready[i] = 1;
+            break;
+        }
+    }
+}
+
 static void SoundSetChannelParams(int slot, int volume, int separation, int step)
 {
     int rightvol;
@@ -1178,8 +1203,6 @@ void I_SubmitSound(void)
     if (!sound_initialized)
         return;
 
-    SoundReclaimBuffers();
-
     for (i = 0; i < AUDIO_BUFFER_COUNT; ++i)
     {
         if (sound_buffer_ready[i])
@@ -1260,7 +1283,12 @@ void I_InitSound(void)
     wave_format.nBlockAlign = (WORD)(wave_format.nChannels * (wave_format.wBitsPerSample / 8));
     wave_format.nAvgBytesPerSec = wave_format.nSamplesPerSec * wave_format.nBlockAlign;
 
-    result = waveOutOpen(&sound_device, WAVE_MAPPER, &wave_format, 0, 0, CALLBACK_NULL);
+    result = waveOutOpen(&sound_device,
+                         WAVE_MAPPER,
+                         &wave_format,
+                         (DWORD_PTR)SoundWaveOutProc,
+                         0,
+                         CALLBACK_FUNCTION);
     if (result == MMSYSERR_NOERROR)
     {
         I_SetChannels();
