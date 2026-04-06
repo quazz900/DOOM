@@ -215,17 +215,20 @@ V_DrawPatch
     byte*	dest;
     byte*	source; 
     int		w; 
-	 
-    y -= SHORT(patch->topoffset); 
-    x -= SHORT(patch->leftoffset); 
+    int		drawx;
+    int		drawy;
+    int		column_top;
+ 
+    drawy = y - SHORT(patch->topoffset);
+    drawx = x - SHORT(patch->leftoffset);
 #ifdef RANGECHECK 
-    if (x<0
-	||x+SHORT(patch->width) >SCREENWIDTH
-	|| y<0
-	|| y+SHORT(patch->height)>SCREENHEIGHT 
+    if (drawx<0
+	||drawx+SHORT(patch->width) >SCREENWIDTH
+	|| drawy<0
+	|| drawy+SHORT(patch->height)>SCREENHEIGHT 
 	|| (unsigned)scrn>4)
     {
-      fprintf( stderr, "Patch at %d,%d exceeds LFB\n", x,y );
+      fprintf( stderr, "Patch at %d,%d exceeds LFB\n", drawx,drawy );
       // No I_Error abort - what is up with TNT.WAD?
       fprintf( stderr, "V_DrawPatch: bad patch (ignored)\n");
       return;
@@ -233,29 +236,49 @@ V_DrawPatch
 #endif 
  
     if (!scrn)
-	V_MarkRect (x, y, SHORT(patch->width), SHORT(patch->height)); 
+	V_MarkRect (drawx, drawy, SHORT(patch->width), SHORT(patch->height)); 
 
     col = 0; 
-    desttop = screens[scrn]+y*SCREENWIDTH+x; 
+    desttop = screens[scrn]+drawy*SCREENWIDTH+drawx; 
 	 
     w = SHORT(patch->width); 
 
-    for ( ; col<w ; x++, col++, desttop++)
+    for ( ; col<w ; col++)
     { 
+        int screen_x = drawx + col;
+
+        if (screen_x < 0 || screen_x >= SCREENWIDTH)
+            continue;
+
 	column = (column_t *)((byte *)patch + LONG(patch->columnofs[col])); 
  
 	// step through the posts in a column 
 	while (column->topdelta != 0xff ) 
 	{ 
 	    source = (byte *)column + 3; 
-	    dest = desttop + column->topdelta*SCREENWIDTH; 
+	    column_top = drawy + column->topdelta;
 	    count = column->length; 
+
+            if (column_top < 0)
+            {
+                source += -column_top;
+                count += column_top;
+                column_top = 0;
+            }
+
+            if (column_top + count > SCREENHEIGHT)
+                count = SCREENHEIGHT - column_top;
+
+            if (count > 0)
+            {
+	        dest = screens[scrn] + column_top * SCREENWIDTH + screen_x;
 			 
-	    while (count--) 
-	    { 
-		*dest = *source++; 
-		dest += SCREENWIDTH; 
-	    } 
+	        while (count--) 
+	        { 
+		    *dest = *source++; 
+		    dest += SCREENWIDTH; 
+	        }
+            }
 	    column = (column_t *)(  (byte *)column + column->length 
 				    + 4 ); 
 	} 
@@ -282,45 +305,68 @@ V_DrawPatchFlipped
     byte*	dest;
     byte*	source; 
     int		w; 
-	 
-    y -= SHORT(patch->topoffset); 
-    x -= SHORT(patch->leftoffset); 
+    int		drawx;
+    int		drawy;
+    int		column_top;
+ 
+    drawy = y - SHORT(patch->topoffset);
+    drawx = x - SHORT(patch->leftoffset);
 #ifdef RANGECHECK 
-    if (x<0
-	||x+SHORT(patch->width) >SCREENWIDTH
-	|| y<0
-	|| y+SHORT(patch->height)>SCREENHEIGHT 
+    if (drawx<0
+	||drawx+SHORT(patch->width) >SCREENWIDTH
+	|| drawy<0
+	|| drawy+SHORT(patch->height)>SCREENHEIGHT 
 	|| (unsigned)scrn>4)
     {
-      fprintf( stderr, "Patch origin %d,%d exceeds LFB\n", x,y );
+      fprintf( stderr, "Patch origin %d,%d exceeds LFB\n", drawx,drawy );
       I_Error ("Bad V_DrawPatch in V_DrawPatchFlipped");
     }
 #endif 
  
     if (!scrn)
-	V_MarkRect (x, y, SHORT(patch->width), SHORT(patch->height)); 
+	V_MarkRect (drawx, drawy, SHORT(patch->width), SHORT(patch->height)); 
 
     col = 0; 
-    desttop = screens[scrn]+y*SCREENWIDTH+x; 
+    desttop = screens[scrn]+drawy*SCREENWIDTH+drawx; 
 	 
     w = SHORT(patch->width); 
 
-    for ( ; col<w ; x++, col++, desttop++) 
+    for ( ; col<w ; col++) 
     { 
+        int screen_x = drawx + col;
+
+        if (screen_x < 0 || screen_x >= SCREENWIDTH)
+            continue;
+
 	column = (column_t *)((byte *)patch + LONG(patch->columnofs[w-1-col])); 
  
 	// step through the posts in a column 
 	while (column->topdelta != 0xff ) 
 	{ 
 	    source = (byte *)column + 3; 
-	    dest = desttop + column->topdelta*SCREENWIDTH; 
+	    column_top = drawy + column->topdelta;
 	    count = column->length; 
+
+            if (column_top < 0)
+            {
+                source += -column_top;
+                count += column_top;
+                column_top = 0;
+            }
+
+            if (column_top + count > SCREENHEIGHT)
+                count = SCREENHEIGHT - column_top;
+
+            if (count > 0)
+            {
+	        dest = screens[scrn] + column_top * SCREENWIDTH + screen_x;
 			 
-	    while (count--) 
-	    { 
-		*dest = *source++; 
-		dest += SCREENWIDTH; 
-	    } 
+	        while (count--) 
+	        { 
+		    *dest = *source++; 
+		    dest += SCREENWIDTH; 
+	        }
+            }
 	    column = (column_t *)(  (byte *)column + column->length 
 				    + 4 ); 
 	} 
