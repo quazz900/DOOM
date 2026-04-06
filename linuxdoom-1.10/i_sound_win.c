@@ -49,6 +49,12 @@ static WAVEHDR sound_headers[AUDIO_BUFFER_COUNT];
 static unsigned char sound_buffers[AUDIO_BUFFER_COUNT][MIXBUFFER_BYTES];
 static int sound_buffer_ready[AUDIO_BUFFER_COUNT];
 static int sound_initialized;
+static int sound_thread_running;
+static HANDLE sound_thread;
+static HANDLE sound_shutdown_event;
+static DWORD sound_thread_id;
+static CRITICAL_SECTION sound_lock;
+static int sound_lock_initialized;
 static unsigned char *sfx_wave_data[NUMSFX];
 static DWORD sfx_wave_size[NUMSFX];
 static int current_sound_handle;
@@ -918,6 +924,34 @@ static void SoundReclaimBuffers(void)
     }
 }
 
+static DWORD WINAPI SoundThreadProc(LPVOID unused)
+{
+    DWORD wait_ms;
+
+    unused = unused;
+
+    while (sound_thread_running)
+    {
+        if (WaitForSingleObject(sound_shutdown_event, 5) == WAIT_OBJECT_0)
+            break;
+
+        EnterCriticalSection(&sound_lock);
+        SoundReclaimBuffers();
+        I_UpdateSound();
+        I_SubmitSound();
+        LeaveCriticalSection(&sound_lock);
+
+        wait_ms = (DWORD)((SAMPLECOUNT * 1000U) / SAMPLERATE / 2U);
+        if (wait_ms < 5)
+            wait_ms = 5;
+
+        if (WaitForSingleObject(sound_shutdown_event, wait_ms) == WAIT_OBJECT_0)
+            break;
+    }
+
+    return 0;
+}
+
 static void CALLBACK SoundWaveOutProc(HWAVEOUT hwo,
                                       UINT uMsg,
                                       DWORD_PTR dwInstance,
@@ -1110,6 +1144,9 @@ void I_StopSound(int handle)
 {
     int i;
 
+    if (sound_lock_initialized)
+        EnterCriticalSection(&sound_lock);
+
     for (i = 0; i < NUM_CHANNELS; ++i)
     {
         if (channelhandles[i] == handle)
@@ -1121,6 +1158,9 @@ void I_StopSound(int handle)
             break;
         }
     }
+
+    if (sound_lock_initialized)
+        LeaveCriticalSection(&sound_lock);
 }
 
 int I_SoundIsPlaying(int handle)
@@ -1136,6 +1176,9 @@ int I_SoundIsPlaying(int handle)
 
 void I_UpdateSound(void)
 {
+    if (sound_thread_running && GetCurrentThreadId() != sound_thread_id)
+        return;
+
     register unsigned int sample;
     register int dl;
     register int dr;
@@ -1197,6 +1240,9 @@ void I_UpdateSound(void)
 
 void I_SubmitSound(void)
 {
+    if (sound_thread_running && GetCurrentThreadId() != sound_thread_id)
+        return;
+
     int i;
     MMRESULT result;
 
@@ -1222,6 +1268,9 @@ void I_UpdateSoundParams(int handle, int vol, int sep, int pitch)
 {
     int i;
 
+    if (sound_lock_initialized)
+        EnterCriticalSection(&sound_lock);
+
     for (i = 0; i < NUM_CHANNELS; ++i)
     {
         if (channelhandles[i] == handle && channels[i])
@@ -1230,16 +1279,29 @@ void I_UpdateSoundParams(int handle, int vol, int sep, int pitch)
             break;
         }
     }
+
+    if (sound_lock_initialized)
+        LeaveCriticalSection(&sound_lock);
 }
 
 int I_StartSound(int id, int vol, int sep, int pitch, int priority)
 {
+    int handle;
+
     priority = 0;
 
     if (id <= 0 || id >= NUMSFX || !S_sfx[id].data)
         return 0;
 
-    return addsfx(id, vol, steptable[pitch], sep);
+    if (sound_lock_initialized)
+        EnterCriticalSection(&sound_lock);
+
+    handle = addsfx(id, vol, steptable[pitch], sep);
+
+    if (sound_lock_initialized)
+        LeaveCriticalSection(&sound_lock);
+
+    return handle;
 }
 
 void I_ShutdownSound(void)
@@ -1256,8 +1318,23 @@ void I_ShutdownSound(void)
         }
     }
 
-    if (!sound_initialized)
-        return;
+    sound_thread_running = 0;
+    if (sound_shutdown_event)
+        SetEvent(sound_shutdown_event);
+    if (sound_thread)
+    {
+        WaitForSingleObject(sound_thread, 1000);
+        CloseHandle(sound_thread);
+        sound_thread = NULL;
+    }
+    if (sound_shutdown_event)
+    {
+        CloseHandle(sound_shutdown_event);
+        sound_shutdown_event = NULL;
+    }
+
+    if (!sound_device)
+        goto cleanup;
 
     waveOutReset(sound_device);
 
@@ -1267,6 +1344,15 @@ void I_ShutdownSound(void)
     waveOutClose(sound_device);
     sound_device = NULL;
     sound_initialized = 0;
+
+cleanup:
+    if (sound_lock_initialized)
+    {
+        DeleteCriticalSection(&sound_lock);
+        sound_lock_initialized = 0;
+    }
+
+    sound_thread_id = 0;
 }
 
 void I_InitSound(void)
@@ -1291,6 +1377,8 @@ void I_InitSound(void)
                          CALLBACK_FUNCTION);
     if (result == MMSYSERR_NOERROR)
     {
+        InitializeCriticalSection(&sound_lock);
+        sound_lock_initialized = 1;
         I_SetChannels();
         memset(sound_headers, 0, sizeof(sound_headers));
         for (i = 0; i < AUDIO_BUFFER_COUNT; ++i)
@@ -1305,6 +1393,22 @@ void I_InitSound(void)
             }
             sound_buffer_ready[i] = 1;
         }
+        sound_shutdown_event = CreateEvent(NULL, TRUE, FALSE, NULL);
+        if (!sound_shutdown_event)
+        {
+            I_ShutdownSound();
+            return;
+        }
+
+        sound_thread_running = 1;
+        sound_thread = CreateThread(NULL, 0, SoundThreadProc, NULL, 0, NULL);
+        if (!sound_thread)
+        {
+            I_ShutdownSound();
+            return;
+        }
+        sound_thread_id = GetThreadId(sound_thread);
+
         sound_initialized = 1;
     }
 
