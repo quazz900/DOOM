@@ -340,7 +340,6 @@ static LRESULT CALLBACK I_WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPA
 
     case WM_PAINT:
         dc = BeginPaint(hwnd, &paint);
-        I_BlitFrame(dc);
         EndPaint(hwnd, &paint);
         return 0;
 
