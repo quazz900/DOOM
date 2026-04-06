@@ -66,7 +66,6 @@ set(DOOM_COMMON_SOURCES
 
 if(WIN32)
     set(DOOM_PLATFORM_SOURCES
-        ${DOOM_SRC_DIR}/i_main.c
         ${DOOM_SRC_DIR}/i_net_win.c
         ${DOOM_SRC_DIR}/i_sound_win.c
         ${DOOM_SRC_DIR}/i_system_win.c
@@ -83,11 +82,20 @@ else()
     )
 endif()
 
-add_executable(doom ${DOOM_COMMON_SOURCES} ${DOOM_PLATFORM_SOURCES})
+add_library(doom_core OBJECT ${DOOM_COMMON_SOURCES} ${DOOM_PLATFORM_SOURCES})
+target_include_directories(doom_core PRIVATE ${DOOM_SRC_DIR})
+
+if(WIN32)
+    target_compile_definitions(doom_core PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS NORMALUNIX)
+    target_compile_options(doom_core PRIVATE /FI${DOOM_SRC_DIR}/doom_win32_compat.h)
+endif()
+
+add_executable(doom $<TARGET_OBJECTS:doom_core> ${DOOM_SRC_DIR}/i_main.c)
 target_include_directories(doom PRIVATE ${DOOM_SRC_DIR})
 set_target_properties(doom PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 if(WIN32)
-    target_compile_definitions(doom PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS NORMALUNIX)
-    target_compile_options(doom PRIVATE /FI${DOOM_SRC_DIR}/doom_win32_compat.h)
+    add_executable(doom-game WIN32 $<TARGET_OBJECTS:doom_core> ${DOOM_SRC_DIR}/i_main_win.c)
+    target_include_directories(doom-game PRIVATE ${DOOM_SRC_DIR})
+    set_target_properties(doom-game PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 endif()
