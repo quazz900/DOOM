@@ -14,6 +14,8 @@
 #include "v_video.h"
 
 static const char *window_class_name = "DoomWin32Window";
+static const int doom_output_width = 320;
+static const int doom_output_height = 240;
 
 static HWND doom_window;
 static BITMAPINFO doom_bitmap_info;
@@ -234,6 +236,9 @@ static LRESULT CALLBACK I_WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPA
 
     switch (message)
     {
+    case WM_ERASEBKGND:
+        return 1;
+
     case WM_CLOSE:
         I_Quit();
         return 0;
@@ -373,13 +378,13 @@ static void I_BlitFrame(HDC dc)
     client_height = client_rect.bottom - client_rect.top;
 
     scale_x = client_width / SCREENWIDTH;
-    scale_y = client_height / SCREENHEIGHT;
+    scale_y = client_height / doom_output_height;
     scale = scale_x < scale_y ? scale_x : scale_y;
     if (scale < 1)
         scale = 1;
 
-    dest_width = SCREENWIDTH * scale;
-    dest_height = SCREENHEIGHT * scale;
+    dest_width = doom_output_width * scale;
+    dest_height = doom_output_height * scale;
     dest_x = (client_width - dest_width) / 2;
     dest_y = (client_height - dest_height) / 2;
 
@@ -451,14 +456,11 @@ void I_UpdateNoBlit(void)
 
 void I_FinishUpdate(void)
 {
-    HDC dc;
-
     if (!doom_window)
         return;
 
-    dc = GetDC(doom_window);
-    I_BlitFrame(dc);
-    ReleaseDC(doom_window, dc);
+    InvalidateRect(doom_window, NULL, FALSE);
+    UpdateWindow(doom_window);
 }
 
 void I_ReadScreen(byte *scr)
@@ -489,8 +491,8 @@ void I_InitGraphics(void)
 
     window_rect.left = 0;
     window_rect.top = 0;
-    window_rect.right = SCREENWIDTH * window_scale;
-    window_rect.bottom = SCREENHEIGHT * window_scale;
+    window_rect.right = doom_output_width * window_scale;
+    window_rect.bottom = doom_output_height * window_scale;
     AdjustWindowRect(&window_rect, WS_OVERLAPPEDWINDOW, FALSE);
 
     doom_window = CreateWindow(window_class_name,
