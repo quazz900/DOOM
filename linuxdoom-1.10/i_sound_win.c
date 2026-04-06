@@ -1186,7 +1186,6 @@ void I_SubmitSound(void)
         {
             memcpy(sound_buffers[i], mixbuffer, MIXBUFFER_BYTES);
             sound_headers[i].dwBufferLength = MIXBUFFER_BYTES;
-            sound_headers[i].dwFlags &= ~WHDR_DONE;
             sound_buffer_ready[i] = 0;
             result = waveOutWrite(sound_device, &sound_headers[i], sizeof(WAVEHDR));
             if (result != MMSYSERR_NOERROR)
