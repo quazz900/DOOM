@@ -78,6 +78,16 @@ static const char rcsid[] = "$Id: d_main.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 #include "d_main.h"
 
 //
+
+static char *
+D_HelpPageName(void)
+{
+    if (W_CheckNumForName("HELP2") != -1)
+	return "HELP2";
+    if (W_CheckNumForName("HELP1") != -1)
+	return "HELP1";
+    return "CREDIT";
+}
 // D-DoomLoop()
 // Not a globally visible function,
 //  just included for source reference,
@@ -504,7 +514,7 @@ void D_AdvanceDemo (void)
 	    if ( gamemode == retail )
 	      pagename = "CREDIT";
 	    else
-	      pagename = "HELP2";
+	      pagename = D_HelpPageName();
 	}
 	break;
       case 5:

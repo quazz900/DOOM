@@ -168,6 +168,16 @@ typedef struct menu_s
 
 short		itemOn;			// menu item skull is on
 short		skullAnimCounter;	// skull animation counter
+
+static char *
+M_HelpPageName(void)
+{
+    if (W_CheckNumForName("HELP2") != -1)
+	return "HELP2";
+    if (W_CheckNumForName("HELP1") != -1)
+	return "HELP1";
+    return "CREDIT";
+}
 short		whichSkull;		// which skull to draw
 
 // graphic name of skulls
@@ -785,7 +795,7 @@ void M_DrawReadThis2(void)
 	break;
       case shareware:
       case registered:
-	V_DrawPatchDirect (0,0,0,W_CacheLumpName("HELP2",PU_CACHE));
+	V_DrawPatchDirect (0,0,0,W_CacheLumpName(M_HelpPageName(),PU_CACHE));
 	break;
       default:
 	break;
