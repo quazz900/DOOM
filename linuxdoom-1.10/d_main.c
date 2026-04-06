@@ -609,6 +609,10 @@ void IdentifyVersion (void)
     sprintf(doom2fwad, "%s/doom2f.wad", doomwaddir);
 
     home = getenv("HOME");
+#ifdef _WIN32
+    if (!home)
+      home = getenv("USERPROFILE");
+#endif
     if (!home)
       I_Error("Please set $HOME to your home directory");
     sprintf(basedefault, "%s/.doomrc", home);
