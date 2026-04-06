@@ -57,7 +57,8 @@ static int current_sound_endtic;
 typedef struct
 {
     int used;
-    char path[MAX_PATH];
+    unsigned char *data;
+    size_t length;
 } music_song_t;
 
 static music_song_t music_songs[MUSIC_SONG_LIMIT];
@@ -65,6 +66,12 @@ static int music_initialized;
 static int music_current_handle;
 static int music_looping;
 static int music_paused;
+static int music_stop_request;
+static int music_shutdown_request;
+static int music_thread_running;
+static HANDLE music_thread;
+static HANDLE music_wake_event;
+static HMIDIOUT music_out_device;
 
 typedef struct
 {
@@ -572,6 +579,252 @@ static int WriteMidiFile(const char *path, const unsigned char *midi_data, size_
     return 1;
 }
 
+static unsigned long ReadMidiBE32(const unsigned char *data)
+{
+    return ((unsigned long)data[0] << 24)
+         | ((unsigned long)data[1] << 16)
+         | ((unsigned long)data[2] << 8)
+         | (unsigned long)data[3];
+}
+
+static unsigned short ReadMidiBE16(const unsigned char *data)
+{
+    return (unsigned short)(((unsigned short)data[0] << 8) | (unsigned short)data[1]);
+}
+
+static int ReadMidiVarLen(const unsigned char *data, size_t length, size_t *position, unsigned long *value)
+{
+    int i;
+    unsigned char b;
+
+    *value = 0;
+
+    for (i = 0; i < 4; ++i)
+    {
+        if (*position >= length)
+            return 0;
+
+        b = data[(*position)++];
+        *value = (*value << 7) | (b & 0x7f);
+
+        if ((b & 0x80) == 0)
+            return 1;
+    }
+
+    return 0;
+}
+
+static int MusicWait(unsigned long milliseconds)
+{
+    while (milliseconds > 0)
+    {
+        DWORD slice;
+        DWORD result;
+
+        if (music_shutdown_request || music_stop_request)
+            return 0;
+
+        while (music_paused)
+        {
+            result = WaitForSingleObject(music_wake_event, 50);
+            if (music_shutdown_request || music_stop_request)
+                return 0;
+            if (result == WAIT_FAILED)
+                return 0;
+        }
+
+        slice = milliseconds > 50 ? 50 : (DWORD)milliseconds;
+        result = WaitForSingleObject(music_wake_event, slice);
+        if (music_shutdown_request || music_stop_request)
+            return 0;
+        if (result == WAIT_FAILED)
+            return 0;
+        if (result == WAIT_TIMEOUT)
+            milliseconds -= slice;
+    }
+
+    return !music_shutdown_request && !music_stop_request;
+}
+
+static int MusicSendShortMessage(unsigned char status,
+                                 unsigned char data1,
+                                 unsigned char data2,
+                                 int has_two_data_bytes)
+{
+    DWORD message;
+
+    if (!music_out_device)
+        return 0;
+
+    message = status | ((DWORD)data1 << 8);
+    if (has_two_data_bytes)
+        message |= ((DWORD)data2 << 16);
+
+    return midiOutShortMsg(music_out_device, message) == MMSYSERR_NOERROR;
+}
+
+static DWORD WINAPI MusicThreadProc(LPVOID unused)
+{
+    unused = unused;
+
+    while (!music_shutdown_request)
+    {
+        const unsigned char *track;
+        size_t track_length;
+        size_t position;
+        unsigned short division;
+        unsigned long tempo;
+        unsigned char running_status;
+        music_song_t *song;
+
+        if (!music_current_handle || !music_songs[music_current_handle - 1].used)
+        {
+            WaitForSingleObject(music_wake_event, 50);
+            continue;
+        }
+
+        song = &music_songs[music_current_handle - 1];
+        if (song->length < 22 || memcmp(song->data, "MThd", 4) != 0 || memcmp(song->data + 14, "MTrk", 4) != 0)
+        {
+            music_current_handle = 0;
+            continue;
+        }
+
+        division = ReadMidiBE16(song->data + 12);
+        track_length = ReadMidiBE32(song->data + 18);
+        if (22 + track_length > song->length || division == 0)
+        {
+            music_current_handle = 0;
+            continue;
+        }
+
+        track = song->data + 22;
+        position = 0;
+        tempo = 500000UL;
+        running_status = 0;
+
+        while (position < track_length && !music_shutdown_request && !music_stop_request)
+        {
+            unsigned long delta;
+            unsigned long wait_ms;
+            unsigned char status;
+
+            if (!ReadMidiVarLen(track, track_length, &position, &delta))
+                break;
+
+            wait_ms = (delta * tempo) / division / 1000UL;
+            if (!MusicWait(wait_ms))
+                break;
+
+            if (position >= track_length)
+                break;
+
+            status = track[position++];
+            if ((status & 0x80) == 0)
+            {
+                if (!running_status)
+                    break;
+                position--;
+                status = running_status;
+            }
+            else
+            {
+                running_status = status;
+            }
+
+            switch (status & 0xf0)
+            {
+            case 0x80:
+            case 0x90:
+            case 0xA0:
+            case 0xB0:
+            case 0xE0:
+            {
+                unsigned char data1;
+                unsigned char data2;
+
+                if (position + 1 >= track_length)
+                    position = track_length;
+                else
+                {
+                    data1 = track[position++];
+                    data2 = track[position++];
+                    MusicSendShortMessage(status, data1, data2, 1);
+                }
+                break;
+            }
+
+            case 0xC0:
+            case 0xD0:
+                if (position >= track_length)
+                    position = track_length;
+                else
+                    MusicSendShortMessage(status, track[position++], 0, 0);
+                break;
+
+            default:
+                if (status == 0xFF)
+                {
+                    unsigned char meta_type;
+                    unsigned long meta_length;
+
+                    if (position >= track_length)
+                        break;
+
+                    meta_type = track[position++];
+                    if (!ReadMidiVarLen(track, track_length, &position, &meta_length))
+                        break;
+                    if (position + meta_length > track_length)
+                        break;
+
+                    if (meta_type == 0x51 && meta_length == 3)
+                    {
+                        tempo = ((unsigned long)track[position] << 16)
+                              | ((unsigned long)track[position + 1] << 8)
+                              | (unsigned long)track[position + 2];
+                    }
+                    else if (meta_type == 0x2F)
+                    {
+                        position = track_length;
+                    }
+
+                    position += meta_length;
+                }
+                else if (status == 0xF0 || status == 0xF7)
+                {
+                    unsigned long sysex_length;
+
+                    if (!ReadMidiVarLen(track, track_length, &position, &sysex_length))
+                        break;
+                    if (position + sysex_length > track_length)
+                        break;
+                    position += sysex_length;
+                }
+                else
+                {
+                    position = track_length;
+                }
+                break;
+            }
+        }
+
+        if (music_shutdown_request)
+            break;
+
+        if (music_stop_request)
+        {
+            music_stop_request = 0;
+            continue;
+        }
+
+        if (!music_looping)
+            music_current_handle = 0;
+    }
+
+    music_thread_running = 0;
+    return 0;
+}
+
 static unsigned char *CreateWaveData(const unsigned char *samples, int sample_count, DWORD *wave_size)
 {
     unsigned char *wave;
@@ -620,8 +873,9 @@ static void MusicApplyVolume(void)
 
 static void MusicStopPlayback(void)
 {
-    mciSendStringA("stop " MUSIC_ALIAS, NULL, 0, NULL);
-    mciSendStringA("close " MUSIC_ALIAS, NULL, 0, NULL);
+    music_stop_request = 1;
+    if (music_wake_event)
+        SetEvent(music_wake_event);
     music_current_handle = 0;
     music_looping = 0;
     music_paused = 0;
@@ -948,6 +1202,34 @@ void I_InitSound(void)
 
 void I_InitMusic(void)
 {
+    MMRESULT result;
+
+    result = midiOutOpen(&music_out_device, MIDI_MAPPER, 0, 0, CALLBACK_NULL);
+    if (result != MMSYSERR_NOERROR)
+        return;
+
+    music_wake_event = CreateEvent(NULL, FALSE, FALSE, NULL);
+    if (!music_wake_event)
+    {
+        midiOutClose(music_out_device);
+        music_out_device = NULL;
+        return;
+    }
+
+    music_stop_request = 0;
+    music_shutdown_request = 0;
+    music_thread_running = 1;
+    music_thread = CreateThread(NULL, 0, MusicThreadProc, NULL, 0, NULL);
+    if (!music_thread)
+    {
+        CloseHandle(music_wake_event);
+        music_wake_event = NULL;
+        midiOutClose(music_out_device);
+        music_out_device = NULL;
+        music_thread_running = 0;
+        return;
+    }
+
     music_initialized = 1;
 }
 
@@ -959,14 +1241,38 @@ void I_ShutdownMusic(void)
         return;
 
     MusicStopPlayback();
+    music_shutdown_request = 1;
+    if (music_wake_event)
+        SetEvent(music_wake_event);
+
+    if (music_thread)
+    {
+        WaitForSingleObject(music_thread, 1000);
+        CloseHandle(music_thread);
+        music_thread = NULL;
+    }
+
+    if (music_wake_event)
+    {
+        CloseHandle(music_wake_event);
+        music_wake_event = NULL;
+    }
+
+    if (music_out_device)
+    {
+        midiOutReset(music_out_device);
+        midiOutClose(music_out_device);
+        music_out_device = NULL;
+    }
 
     for (i = 0; i < MUSIC_SONG_LIMIT; ++i)
     {
         if (music_songs[i].used)
         {
-            DeleteFileA(music_songs[i].path);
+            free(music_songs[i].data);
             music_songs[i].used = 0;
-            music_songs[i].path[0] = '\0';
+            music_songs[i].data = NULL;
+            music_songs[i].length = 0;
         }
     }
 
@@ -975,41 +1281,15 @@ void I_ShutdownMusic(void)
 
 void I_PlaySong(int handle, int looping)
 {
-    char command[2 * MAX_PATH + 64];
-    music_song_t *song;
-    MCIERROR error;
-
     if (handle < 1 || handle > MUSIC_SONG_LIMIT || !music_songs[handle - 1].used)
         return;
 
-    MusicStopPlayback();
-
-    song = &music_songs[handle - 1];
-    sprintf(command, "open \"%s\" alias %s", song->path, MUSIC_ALIAS);
-    error = mciSendStringA(command, NULL, 0, NULL);
-    if (error != 0)
-    {
-        sprintf(command, "open \"%s\" type sequencer alias %s", song->path, MUSIC_ALIAS);
-        error = mciSendStringA(command, NULL, 0, NULL);
-        if (error != 0)
-            return;
-    }
-
-    if (looping)
-        sprintf(command, "play %s from 0 repeat", MUSIC_ALIAS);
-    else
-        sprintf(command, "play %s from 0", MUSIC_ALIAS);
-
-    if (mciSendStringA(command, NULL, 0, NULL) != 0)
-    {
-        MusicStopPlayback();
-        return;
-    }
-
+    music_stop_request = 0;
     music_current_handle = handle;
     music_looping = looping;
     music_paused = 0;
-    MusicApplyVolume();
+    if (music_wake_event)
+        SetEvent(music_wake_event);
 }
 
 void I_PauseSong(int handle)
@@ -1017,8 +1297,9 @@ void I_PauseSong(int handle)
     if (handle != music_current_handle)
         return;
 
-    if (mciSendStringA("pause " MUSIC_ALIAS, NULL, 0, NULL) == 0)
-        music_paused = 1;
+    music_paused = 1;
+    if (music_wake_event)
+        SetEvent(music_wake_event);
 }
 
 void I_ResumeSong(int handle)
@@ -1026,8 +1307,9 @@ void I_ResumeSong(int handle)
     if (handle != music_current_handle)
         return;
 
-    if (mciSendStringA("resume " MUSIC_ALIAS, NULL, 0, NULL) == 0)
-        music_paused = 0;
+    music_paused = 0;
+    if (music_wake_event)
+        SetEvent(music_wake_event);
 }
 
 void I_StopSong(int handle)
@@ -1049,9 +1331,10 @@ void I_UnRegisterSong(int handle)
     song = &music_songs[handle - 1];
     if (song->used)
     {
-        DeleteFileA(song->path);
+        free(song->data);
         song->used = 0;
-        song->path[0] = '\0';
+        song->data = NULL;
+        song->length = 0;
     }
 }
 
@@ -1059,9 +1342,6 @@ int I_RegisterSong(void *data)
 {
     unsigned char *midi_data;
     size_t midi_length;
-    char temp_path[MAX_PATH];
-    char temp_file[MAX_PATH];
-    char midi_file[MAX_PATH];
     int i;
 
     midi_data = NULL;
@@ -1070,59 +1350,25 @@ int I_RegisterSong(void *data)
     if (!ConvertMusToMidi(data, &midi_data, &midi_length))
         return 0;
 
-    if (!GetTempPathA(MAX_PATH, temp_path))
-    {
-        free(midi_data);
-        return 0;
-    }
-
-    if (!GetTempFileNameA(temp_path, "dmu", 0, temp_file))
-    {
-        free(midi_data);
-        return 0;
-    }
-
-    strcpy(midi_file, temp_file);
-    strcpy(strrchr(midi_file, '.'), ".mid");
-    DeleteFileA(midi_file);
-    if (!MoveFileA(temp_file, midi_file))
-    {
-        DeleteFileA(temp_file);
-        free(midi_data);
-        return 0;
-    }
-
-    if (!WriteMidiFile(midi_file, midi_data, midi_length))
-    {
-        free(midi_data);
-        return 0;
-    }
-
-    free(midi_data);
-
     for (i = 0; i < MUSIC_SONG_LIMIT; ++i)
     {
         if (!music_songs[i].used)
         {
             music_songs[i].used = 1;
-            strcpy(music_songs[i].path, midi_file);
+            music_songs[i].data = midi_data;
+            music_songs[i].length = midi_length;
             return i + 1;
         }
     }
 
-    DeleteFileA(midi_file);
+    free(midi_data);
     return 0;
 }
 
 int I_QrySongPlaying(int handle)
 {
-    char mode[64];
-
     if (handle != music_current_handle)
         return 0;
 
-    if (mciSendStringA("status " MUSIC_ALIAS " mode", mode, sizeof(mode), NULL) != 0)
-        return 0;
-
-    return strcmp(mode, "stopped") != 0;
+    return music_thread_running && !music_stop_request;
 }
