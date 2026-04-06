@@ -230,6 +230,121 @@ static int MidiAllocateChannel(const int channel_map[16])
     return result;
 }
 
+static int MidiWriteQueuedTime(midi_buffer_t *buffer, unsigned long *queued_time)
+{
+    unsigned long buffer_value;
+
+    buffer_value = *queued_time & 0x7f;
+
+    while ((*queued_time >>= 7) != 0)
+    {
+        buffer_value <<= 8;
+        buffer_value |= ((*queued_time & 0x7f) | 0x80);
+    }
+
+    for (;;)
+    {
+        if (!MidiAppendByte(buffer, (unsigned char)(buffer_value & 0xff)))
+            return 0;
+
+        if ((buffer_value & 0x80) != 0)
+            buffer_value >>= 8;
+        else
+        {
+            *queued_time = 0;
+            return 1;
+        }
+    }
+}
+
+static int MidiWritePressKey(midi_buffer_t *buffer,
+                             unsigned long *queued_time,
+                             unsigned char channel,
+                             unsigned char key,
+                             unsigned char velocity)
+{
+    if (!MidiWriteQueuedTime(buffer, queued_time))
+        return 0;
+    if (!MidiAppendByte(buffer, (unsigned char)(0x90 | channel)))
+        return 0;
+    if (!MidiAppendByte(buffer, (unsigned char)(key & 0x7f)))
+        return 0;
+    if (!MidiAppendByte(buffer, (unsigned char)(velocity & 0x7f)))
+        return 0;
+    return 1;
+}
+
+static int MidiWriteReleaseKey(midi_buffer_t *buffer,
+                               unsigned long *queued_time,
+                               unsigned char channel,
+                               unsigned char key)
+{
+    if (!MidiWriteQueuedTime(buffer, queued_time))
+        return 0;
+    if (!MidiAppendByte(buffer, (unsigned char)(0x80 | channel)))
+        return 0;
+    if (!MidiAppendByte(buffer, (unsigned char)(key & 0x7f)))
+        return 0;
+    if (!MidiAppendByte(buffer, 0x00))
+        return 0;
+    return 1;
+}
+
+static int MidiWritePitchWheel(midi_buffer_t *buffer,
+                               unsigned long *queued_time,
+                               unsigned char channel,
+                               unsigned short wheel)
+{
+    if (!MidiWriteQueuedTime(buffer, queued_time))
+        return 0;
+    if (!MidiAppendByte(buffer, (unsigned char)(0xe0 | channel)))
+        return 0;
+    if (!MidiAppendByte(buffer, (unsigned char)(wheel & 0x7f)))
+        return 0;
+    if (!MidiAppendByte(buffer, (unsigned char)((wheel >> 7) & 0x7f)))
+        return 0;
+    return 1;
+}
+
+static int MidiWriteControllerValued(midi_buffer_t *buffer,
+                                     unsigned long *queued_time,
+                                     unsigned char channel,
+                                     unsigned char controller,
+                                     unsigned char value)
+{
+    if (!MidiWriteQueuedTime(buffer, queued_time))
+        return 0;
+    if (!MidiAppendByte(buffer, (unsigned char)(0xb0 | channel)))
+        return 0;
+    if (!MidiAppendByte(buffer, controller))
+        return 0;
+    if (!MidiAppendByte(buffer, (unsigned char)((value & 0x80) ? 0x7f : value)))
+        return 0;
+    return 1;
+}
+
+static int MidiWriteControllerValueless(midi_buffer_t *buffer,
+                                        unsigned long *queued_time,
+                                        unsigned char channel,
+                                        unsigned char controller)
+{
+    return MidiWriteControllerValued(buffer, queued_time, channel, controller, 0);
+}
+
+static int MidiWritePatchChange(midi_buffer_t *buffer,
+                                unsigned long *queued_time,
+                                unsigned char channel,
+                                unsigned char patch)
+{
+    if (!MidiWriteQueuedTime(buffer, queued_time))
+        return 0;
+    if (!MidiAppendByte(buffer, (unsigned char)(0xc0 | channel)))
+        return 0;
+    if (!MidiAppendByte(buffer, (unsigned char)(patch & 0x7f)))
+        return 0;
+    return 1;
+}
+
 static unsigned long MusReadTime(const unsigned char *score, size_t score_length, size_t *position)
 {
     unsigned long time;
@@ -256,7 +371,6 @@ static int ConvertMusToMidi(const void *data, unsigned char **midi_data, size_t 
     unsigned short score_start;
     const unsigned char *score;
     size_t position;
-    midi_buffer_t track;
     midi_buffer_t midi;
     unsigned char channel_volume[16];
     int channel_map[16];
@@ -264,9 +378,8 @@ static int ConvertMusToMidi(const void *data, unsigned char **midi_data, size_t 
         0x00, 0x20, 0x01, 0x07, 0x0A, 0x0B, 0x5B, 0x5D,
         0x40, 0x43, 0x78, 0x7B, 0x7E, 0x7F, 0x79
     };
-    unsigned long pending_delta;
+    unsigned long queued_time;
     int finished;
-    int status;
     int i;
 
     mus_data = (const unsigned char *)data;
@@ -277,7 +390,6 @@ static int ConvertMusToMidi(const void *data, unsigned char **midi_data, size_t 
     score_start = MusReadLE16(mus_data + 6);
     score = mus_data + score_start;
 
-    memset(&track, 0, sizeof(track));
     memset(&midi, 0, sizeof(midi));
 
     for (i = 0; i < 16; ++i)
@@ -286,32 +398,34 @@ static int ConvertMusToMidi(const void *data, unsigned char **midi_data, size_t 
         channel_map[i] = -1;
     }
 
-    pending_delta = 0;
+    queued_time = 0;
     position = 0;
     finished = 0;
 
+    if (!MidiAppendData(&midi, "MThd", 4)
+        || !MidiAppendBE32(&midi, 6)
+        || !MidiAppendBE16(&midi, 0)
+        || !MidiAppendBE16(&midi, 1)
+        || !MidiAppendBE16(&midi, MIDI_TICKS_PER_QUARTER)
+        || !MidiAppendData(&midi, "MTrk", 4)
+        || !MidiAppendBE32(&midi, 0))
+        goto fail;
+
     while (!finished && position < score_length)
     {
-        unsigned long group_delta;
-        int first_event;
-
-        group_delta = pending_delta;
-        pending_delta = 0;
-        first_event = 1;
-
         for (;;)
         {
-            unsigned char event;
+            unsigned char event_descriptor;
             int event_type;
             int mus_channel;
             int midi_channel;
-            unsigned long delta;
+            unsigned char key;
+            unsigned char controller;
+            unsigned char value;
 
-            event = score[position++];
-            event_type = (event >> 4) & 0x07;
-            mus_channel = event & 0x0f;
-            delta = first_event ? group_delta : 0;
-            first_event = 0;
+            event_descriptor = score[position++];
+            event_type = event_descriptor & 0x70;
+            mus_channel = event_descriptor & 0x0f;
 
             if (mus_channel == 15)
             {
@@ -322,13 +436,11 @@ static int ConvertMusToMidi(const void *data, unsigned char **midi_data, size_t 
                 if (channel_map[mus_channel] == -1)
                 {
                     channel_map[mus_channel] = MidiAllocateChannel(channel_map);
-                    if (!MidiAppendShortEvent(&track,
-                                              delta,
-                                              (unsigned char)(0xb0 | channel_map[mus_channel]),
-                                              0x7b,
-                                              0x00))
+                    if (!MidiWriteControllerValueless(&midi,
+                                                      &queued_time,
+                                                      (unsigned char)channel_map[mus_channel],
+                                                      0x7b))
                         goto fail;
-                    delta = 0;
                 }
 
                 midi_channel = channel_map[mus_channel];
@@ -336,118 +448,73 @@ static int ConvertMusToMidi(const void *data, unsigned char **midi_data, size_t 
 
             switch (event_type)
             {
-            case 0:
-            {
-                unsigned char note;
-
-                note = score[position++] & 0x7f;
-                status = MidiAppendShortEvent(&track,
-                                              delta,
-                                              (unsigned char)(0x80 | midi_channel),
-                                              note,
-                                              0);
-                if (!status)
+            case 0x00:
+                key = score[position++];
+                if (!MidiWriteReleaseKey(&midi, &queued_time, (unsigned char)midi_channel, key))
                     goto fail;
                 break;
-            }
 
-            case 1:
-            {
-                unsigned char note;
-                unsigned char velocity;
+            case 0x10:
+                key = score[position++];
+                if (key & 0x80)
+                    channel_volume[mus_channel] = score[position++] & 0x7f;
 
-                note = score[position++];
-                velocity = channel_volume[mus_channel];
-
-                if (note & 0x80)
-                {
-                    note &= 0x7f;
-                    velocity = score[position++] & 0x7f;
-                    channel_volume[mus_channel] = velocity;
-                }
-
-                status = MidiAppendShortEvent(&track,
-                                              delta,
-                                              (unsigned char)(0x90 | midi_channel),
-                                              note,
-                                              velocity);
-                if (!status)
+                if (!MidiWritePressKey(&midi,
+                                       &queued_time,
+                                       (unsigned char)midi_channel,
+                                       (unsigned char)(key & 0x7f),
+                                       channel_volume[mus_channel]))
                     goto fail;
                 break;
-            }
 
-            case 2:
-            {
-                unsigned char value;
-                unsigned short bend;
-
+            case 0x20:
                 value = score[position++];
-                bend = (unsigned short)(value << 6);
-                status = MidiAppendShortEvent(&track,
-                                              delta,
-                                              (unsigned char)(0xe0 | midi_channel),
-                                              (unsigned char)(bend & 0x7f),
-                                              (unsigned char)((bend >> 7) & 0x7f));
-                if (!status)
+                if (!MidiWritePitchWheel(&midi,
+                                         &queued_time,
+                                         (unsigned char)midi_channel,
+                                         (unsigned short)(value * 64)))
                     goto fail;
                 break;
-            }
 
-            case 4:
-            {
-                int controller;
-                int value;
-                int midi_controller;
+            case 0x30:
+                controller = score[position++] & 0x7f;
+                if (controller < 10 || controller > 14)
+                    goto fail;
 
+                if (!MidiWriteControllerValueless(&midi,
+                                                  &queued_time,
+                                                  (unsigned char)midi_channel,
+                                                  controller_map[controller]))
+                    goto fail;
+                break;
+
+            case 0x40:
                 controller = score[position++] & 0x7f;
                 value = score[position++] & 0x7f;
 
                 if (controller == 0)
                 {
-                    status = MidiAppendProgramChange(&track,
-                                                     delta,
-                                                     (unsigned char)(0xc0 | midi_channel),
-                                                     (unsigned char)value);
+                    if (!MidiWritePatchChange(&midi,
+                                              &queued_time,
+                                              (unsigned char)midi_channel,
+                                              value))
+                        goto fail;
                 }
                 else
                 {
                     if (controller < 1 || controller > 9)
                         goto fail;
 
-                    status = MidiAppendShortEvent(&track,
-                                                  delta,
-                                                  (unsigned char)(0xb0 | midi_channel),
-                                                  controller_map[controller],
-                                                  (unsigned char)value);
+                    if (!MidiWriteControllerValued(&midi,
+                                                   &queued_time,
+                                                   (unsigned char)midi_channel,
+                                                   controller_map[controller],
+                                                   value))
+                        goto fail;
                 }
-
-                if (!status)
-                    goto fail;
-                break;
-            }
-
-            case 5:
                 break;
 
-            case 3:
-            {
-                int controller;
-
-                controller = score[position++] & 0x7f;
-                if (controller < 10 || controller > 14)
-                    goto fail;
-
-                status = MidiAppendShortEvent(&track,
-                                              delta,
-                                              (unsigned char)(0xb0 | midi_channel),
-                                              controller_map[controller],
-                                              0x00);
-                if (!status)
-                    goto fail;
-                break;
-            }
-
-            case 6:
+            case 0x60:
                 finished = 1;
                 break;
 
@@ -455,40 +522,33 @@ static int ConvertMusToMidi(const void *data, unsigned char **midi_data, size_t 
                 goto fail;
             }
 
-            if (event & 0x80)
-            {
-                pending_delta = MusReadTime(score, score_length, &position);
+            if (event_descriptor & 0x80)
                 break;
-            }
 
             if (finished)
                 break;
         }
+
+        if (!finished)
+            queued_time += MusReadTime(score, score_length, &position);
     }
 
-    if (!MidiAppendVarLen(&track, pending_delta)
-        || !MidiAppendByte(&track, 0xff)
-        || !MidiAppendByte(&track, 0x2f)
-        || !MidiAppendByte(&track, 0x00))
+    if (!MidiWriteQueuedTime(&midi, &queued_time)
+        || !MidiAppendByte(&midi, 0xff)
+        || !MidiAppendByte(&midi, 0x2f)
+        || !MidiAppendByte(&midi, 0x00))
         goto fail;
 
-    if (!MidiAppendData(&midi, "MThd", 4)
-        || !MidiAppendBE32(&midi, 6)
-        || !MidiAppendBE16(&midi, 0)
-        || !MidiAppendBE16(&midi, 1)
-        || !MidiAppendBE16(&midi, MIDI_TICKS_PER_QUARTER)
-        || !MidiAppendData(&midi, "MTrk", 4)
-        || !MidiAppendBE32(&midi, (unsigned long)track.length)
-        || !MidiAppendData(&midi, track.data, track.length))
-        goto fail;
+    midi.data[18] = (unsigned char)(((midi.length - 22) >> 24) & 0xff);
+    midi.data[19] = (unsigned char)(((midi.length - 22) >> 16) & 0xff);
+    midi.data[20] = (unsigned char)(((midi.length - 22) >> 8) & 0xff);
+    midi.data[21] = (unsigned char)((midi.length - 22) & 0xff);
 
-    free(track.data);
     *midi_data = midi.data;
     *midi_length = midi.length;
     return 1;
 
 fail:
-    free(track.data);
     free(midi.data);
     return 0;
 }
