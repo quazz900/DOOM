@@ -614,10 +614,24 @@ static int ReadMidiVarLen(const unsigned char *data, size_t length, size_t *posi
     return 0;
 }
 
-static int MusicWait(unsigned long milliseconds)
+static void MusicSilenceAllChannels(void)
 {
-    while (milliseconds > 0)
+    int channel;
+
+    for (channel = 0; channel < 16; ++channel)
     {
+        MusicSendShortMessage((unsigned char)(0xB0 | channel), 0x7B, 0x00, 1);
+        MusicSendShortMessage((unsigned char)(0xB0 | channel), 0x78, 0x00, 1);
+        MusicSendShortMessage((unsigned char)(0xB0 | channel), 0x79, 0x00, 1);
+    }
+}
+
+static int MusicWaitUntil(ULONGLONG *target_time_ms)
+{
+    for (;;)
+    {
+        ULONGLONG now;
+        DWORD remaining;
         DWORD slice;
         DWORD result;
 
@@ -626,24 +640,27 @@ static int MusicWait(unsigned long milliseconds)
 
         while (music_paused)
         {
-            result = WaitForSingleObject(music_wake_event, 50);
+            result = WaitForSingleObject(music_wake_event, 10);
             if (music_shutdown_request || music_stop_request)
                 return 0;
             if (result == WAIT_FAILED)
                 return 0;
+            *target_time_ms = GetTickCount64();
         }
 
-        slice = milliseconds > 50 ? 50 : (DWORD)milliseconds;
+        now = GetTickCount64();
+        if (now >= *target_time_ms)
+            return 1;
+
+        remaining = (DWORD)(*target_time_ms - now);
+        slice = remaining > 2 ? remaining - 1 : remaining;
+        if (slice == 0)
+            slice = 1;
+
         result = WaitForSingleObject(music_wake_event, slice);
-        if (music_shutdown_request || music_stop_request)
-            return 0;
         if (result == WAIT_FAILED)
             return 0;
-        if (result == WAIT_TIMEOUT)
-            milliseconds -= slice;
     }
-
-    return !music_shutdown_request && !music_stop_request;
 }
 
 static int MusicSendShortMessage(unsigned char status,
@@ -675,6 +692,7 @@ static DWORD WINAPI MusicThreadProc(LPVOID unused)
         unsigned short division;
         unsigned long tempo;
         unsigned char running_status;
+        ULONGLONG target_time_ms;
         music_song_t *song;
 
         if (!music_current_handle || !music_songs[music_current_handle - 1].used)
@@ -702,18 +720,20 @@ static DWORD WINAPI MusicThreadProc(LPVOID unused)
         position = 0;
         tempo = 500000UL;
         running_status = 0;
+        target_time_ms = GetTickCount64();
 
         while (position < track_length && !music_shutdown_request && !music_stop_request)
         {
             unsigned long delta;
-            unsigned long wait_ms;
+            unsigned long long wait_us;
             unsigned char status;
 
             if (!ReadMidiVarLen(track, track_length, &position, &delta))
                 break;
 
-            wait_ms = (delta * tempo) / division / 1000UL;
-            if (!MusicWait(wait_ms))
+            wait_us = ((unsigned long long)delta * (unsigned long long)tempo) / division;
+            target_time_ms += (ULONGLONG)((wait_us + 999ULL) / 1000ULL);
+            if (!MusicWaitUntil(&target_time_ms))
                 break;
 
             if (position >= track_length)
@@ -813,9 +833,12 @@ static DWORD WINAPI MusicThreadProc(LPVOID unused)
 
         if (music_stop_request)
         {
+            MusicSilenceAllChannels();
             music_stop_request = 0;
             continue;
         }
+
+        MusicSilenceAllChannels();
 
         if (!music_looping)
             music_current_handle = 0;
@@ -876,6 +899,7 @@ static void MusicStopPlayback(void)
     music_stop_request = 1;
     if (music_wake_event)
         SetEvent(music_wake_event);
+    MusicSilenceAllChannels();
     music_current_handle = 0;
     music_looping = 0;
     music_paused = 0;
@@ -1208,9 +1232,12 @@ void I_InitMusic(void)
     if (result != MMSYSERR_NOERROR)
         return;
 
+    timeBeginPeriod(1);
+
     music_wake_event = CreateEvent(NULL, FALSE, FALSE, NULL);
     if (!music_wake_event)
     {
+        timeEndPeriod(1);
         midiOutClose(music_out_device);
         music_out_device = NULL;
         return;
@@ -1224,6 +1251,7 @@ void I_InitMusic(void)
     {
         CloseHandle(music_wake_event);
         music_wake_event = NULL;
+        timeEndPeriod(1);
         midiOutClose(music_out_device);
         music_out_device = NULL;
         music_thread_running = 0;
@@ -1260,9 +1288,11 @@ void I_ShutdownMusic(void)
 
     if (music_out_device)
     {
+        MusicSilenceAllChannels();
         midiOutReset(music_out_device);
         midiOutClose(music_out_device);
         music_out_device = NULL;
+        timeEndPeriod(1);
     }
 
     for (i = 0; i < MUSIC_SONG_LIMIT; ++i)
