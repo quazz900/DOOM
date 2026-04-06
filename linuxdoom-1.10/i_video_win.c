@@ -8,6 +8,7 @@
 
 #include "d_main.h"
 #include "doomdef.h"
+#include "doomstat.h"
 #include "i_system.h"
 #include "i_video.h"
 #include "v_video.h"
@@ -25,12 +26,14 @@ static int mouse_captured;
 static int mouse_ignore_move;
 static int mouse_center_x;
 static int mouse_center_y;
+static int window_focused;
 
 static void I_BlitFrame(HDC dc);
 static void I_PostMouseEvent(int buttons, int delta_x, int delta_y);
 static void I_UpdateMouseCenter(void);
 static void I_SetMouseCapture(boolean capture);
 static void I_RecenterMouse(void);
+static void I_SyncMouseCapture(void);
 
 static int I_TranslateKey(WPARAM key)
 {
@@ -217,6 +220,11 @@ static void I_SetMouseCapture(boolean capture)
     }
 }
 
+static void I_SyncMouseCapture(void)
+{
+    I_SetMouseCapture(window_focused && !menuactive && !paused);
+}
+
 static LRESULT CALLBACK I_WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
     PAINTSTRUCT paint;
@@ -235,15 +243,18 @@ static LRESULT CALLBACK I_WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPA
         return 0;
 
     case WM_ACTIVATE:
-        I_SetMouseCapture(LOWORD(wparam) != WA_INACTIVE);
+        window_focused = (LOWORD(wparam) != WA_INACTIVE);
+        I_SyncMouseCapture();
         return 0;
 
     case WM_SETFOCUS:
-        I_SetMouseCapture(true);
+        window_focused = 1;
+        I_SyncMouseCapture();
         return 0;
 
     case WM_KILLFOCUS:
-        I_SetMouseCapture(false);
+        window_focused = 0;
+        I_SyncMouseCapture();
         return 0;
 
     case WM_KEYDOWN:
@@ -375,6 +386,7 @@ void I_ShutdownGraphics(void)
     mouse_initialized = 0;
     mouse_buttons = 0;
     mouse_ignore_move = 0;
+    window_focused = 0;
 
     if (doom_framebuffer)
     {
@@ -400,6 +412,8 @@ void I_StartTic(void)
         TranslateMessage(&message);
         DispatchMessage(&message);
     }
+
+    I_SyncMouseCapture();
 
     if (doom_window)
     {
@@ -478,7 +492,8 @@ void I_InitGraphics(void)
     UpdateWindow(doom_window);
     SetForegroundWindow(doom_window);
     I_UpdateMouseCenter();
-    I_SetMouseCapture(true);
+    window_focused = 1;
+    I_SyncMouseCapture();
 
     doom_framebuffer = (uint32_t *)malloc(sizeof(*doom_framebuffer) * SCREENWIDTH * SCREENHEIGHT);
     if (!doom_framebuffer)
