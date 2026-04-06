@@ -58,8 +58,6 @@ typedef struct
 } music_song_t;
 
 static music_song_t music_songs[MUSIC_SONG_LIMIT];
-static HMIDIOUT music_volume_device;
-static int music_device_open;
 static int music_initialized;
 static int music_current_handle;
 static int music_looping;
@@ -514,16 +512,7 @@ static int WriteMidiFile(const char *path, const unsigned char *midi_data, size_
 
 static void MusicApplyVolume(void)
 {
-    DWORD volume;
-    int scaled_volume;
-
-    if (!music_device_open)
-        return;
-
-    scaled_volume = MixerVolumeFromDoom(snd_MusicVolume);
-    volume = (DWORD)((scaled_volume * 0xffff) / 127);
-    volume |= volume << 16;
-    midiOutSetVolume(music_volume_device, volume);
+    snd_MusicVolume = MixerVolumeFromDoom(snd_MusicVolume);
 }
 
 static void MusicStopPlayback(void)
@@ -939,15 +928,6 @@ void I_InitSound(void)
 
 void I_InitMusic(void)
 {
-    MMRESULT result;
-
-    result = midiOutOpen(&music_volume_device, MIDI_MAPPER, 0, 0, CALLBACK_NULL);
-    if (result == MMSYSERR_NOERROR)
-    {
-        music_device_open = 1;
-        MusicApplyVolume();
-    }
-
     music_initialized = 1;
 }
 
@@ -959,13 +939,6 @@ void I_ShutdownMusic(void)
         return;
 
     MusicStopPlayback();
-
-    if (music_device_open)
-    {
-        midiOutClose(music_volume_device);
-        music_device_open = 0;
-        music_volume_device = NULL;
-    }
 
     for (i = 0; i < MUSIC_SONG_LIMIT; ++i)
     {
@@ -984,6 +957,7 @@ void I_PlaySong(int handle, int looping)
 {
     char command[2 * MAX_PATH + 64];
     music_song_t *song;
+    MCIERROR error;
 
     if (handle < 1 || handle > MUSIC_SONG_LIMIT || !music_songs[handle - 1].used)
         return;
@@ -991,9 +965,15 @@ void I_PlaySong(int handle, int looping)
     MusicStopPlayback();
 
     song = &music_songs[handle - 1];
-    sprintf(command, "open \"%s\" type sequencer alias %s", song->path, MUSIC_ALIAS);
-    if (mciSendStringA(command, NULL, 0, NULL) != 0)
-        return;
+    sprintf(command, "open \"%s\" alias %s", song->path, MUSIC_ALIAS);
+    error = mciSendStringA(command, NULL, 0, NULL);
+    if (error != 0)
+    {
+        sprintf(command, "open \"%s\" type sequencer alias %s", song->path, MUSIC_ALIAS);
+        error = mciSendStringA(command, NULL, 0, NULL);
+        if (error != 0)
+            return;
+    }
 
     if (looping)
         sprintf(command, "play %s from 0 repeat", MUSIC_ALIAS);
@@ -1061,6 +1041,7 @@ int I_RegisterSong(void *data)
     size_t midi_length;
     char temp_path[MAX_PATH];
     char temp_file[MAX_PATH];
+    char midi_file[MAX_PATH];
     int i;
 
     midi_data = NULL;
@@ -1081,7 +1062,17 @@ int I_RegisterSong(void *data)
         return 0;
     }
 
-    if (!WriteMidiFile(temp_file, midi_data, midi_length))
+    strcpy(midi_file, temp_file);
+    strcpy(strrchr(midi_file, '.'), ".mid");
+    DeleteFileA(midi_file);
+    if (!MoveFileA(temp_file, midi_file))
+    {
+        DeleteFileA(temp_file);
+        free(midi_data);
+        return 0;
+    }
+
+    if (!WriteMidiFile(midi_file, midi_data, midi_length))
     {
         free(midi_data);
         return 0;
@@ -1094,12 +1085,12 @@ int I_RegisterSong(void *data)
         if (!music_songs[i].used)
         {
             music_songs[i].used = 1;
-            strcpy(music_songs[i].path, temp_file);
+            strcpy(music_songs[i].path, midi_file);
             return i + 1;
         }
     }
 
-    DeleteFileA(temp_file);
+    DeleteFileA(midi_file);
     return 0;
 }
 
