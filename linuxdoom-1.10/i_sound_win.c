@@ -23,8 +23,7 @@ char *sndserver_filename = "";
 #define SAMPLECOUNT 512
 #define NUM_CHANNELS 8
 #define BUFMUL 4
-#define MIXBUFFER_SAMPLES (SAMPLECOUNT * 2)
-#define MIXBUFFER_BYTES (MIXBUFFER_SAMPLES * (int)sizeof(signed short))
+#define MIXBUFFER_BYTES (SAMPLECOUNT * BUFMUL)
 #define SAMPLERATE 11025
 #define AUDIO_BUFFER_COUNT 4
 #define MIDI_TICKS_PER_QUARTER 70
@@ -32,7 +31,7 @@ char *sndserver_filename = "";
 #define MUSIC_SONG_LIMIT 8
 
 static int lengths[NUMSFX];
-static signed short mixbuffer[MIXBUFFER_SAMPLES];
+static signed short mixbuffer[MIXBUFFER_BYTES];
 static unsigned int channelstep[NUM_CHANNELS];
 static unsigned int channelstepremainder[NUM_CHANNELS];
 static unsigned char *channels[NUM_CHANNELS];
@@ -52,6 +51,8 @@ static int sound_buffer_ready[AUDIO_BUFFER_COUNT];
 static int sound_initialized;
 static unsigned char *sfx_wave_data[NUMSFX];
 static DWORD sfx_wave_size[NUMSFX];
+static int current_sound_handle;
+static int current_sound_endtic;
 typedef struct
 {
     int used;
@@ -1078,164 +1079,58 @@ int I_GetSfxLumpNum(sfxinfo_t *sfx)
 
 void I_StopSound(int handle)
 {
-    int i;
-
-    for (i = 0; i < NUM_CHANNELS; ++i)
+    if (handle == current_sound_handle)
     {
-        if (channelhandles[i] == handle)
-        {
-            channels[i] = NULL;
-            channelhandles[i] = 0;
-            break;
-        }
+        PlaySoundA(NULL, NULL, 0);
+        current_sound_handle = 0;
+        current_sound_endtic = 0;
     }
 }
 
 int I_SoundIsPlaying(int handle)
 {
-    int i;
-
-    for (i = 0; i < NUM_CHANNELS; ++i)
-        if (channelhandles[i] == handle && channels[i])
-            return 1;
-
-    return 0;
+    return handle == current_sound_handle && gametic < current_sound_endtic;
 }
 
 void I_UpdateSound(void)
 {
-    unsigned int sample;
-    int dl;
-    int dr;
-    signed short *leftout;
-    signed short *rightout;
-    signed short *leftend;
-    int step;
-    int chan;
-
-    leftout = mixbuffer;
-    rightout = mixbuffer + 1;
-    step = 2;
-    leftend = mixbuffer + SAMPLECOUNT * step;
-
-    while (leftout != leftend)
-    {
-        dl = 0;
-        dr = 0;
-
-        for (chan = 0; chan < NUM_CHANNELS; ++chan)
-        {
-            if (channels[chan])
-            {
-                sample = *channels[chan];
-                dl += channelleftvol_lookup[chan][sample];
-                dr += channelrightvol_lookup[chan][sample];
-                channelstepremainder[chan] += channelstep[chan];
-                channels[chan] += channelstepremainder[chan] >> 16;
-                channelstepremainder[chan] &= 65535;
-
-                if (channels[chan] >= channelsend[chan])
-                {
-                    channels[chan] = NULL;
-                    channelhandles[chan] = 0;
-                }
-            }
-        }
-
-        if (dl > 0x7fff)
-            *leftout = 0x7fff;
-        else if (dl < -0x8000)
-            *leftout = -0x8000;
-        else
-            *leftout = (signed short)dl;
-
-        if (dr > 0x7fff)
-            *rightout = 0x7fff;
-        else if (dr < -0x8000)
-            *rightout = -0x8000;
-        else
-            *rightout = (signed short)dr;
-
-        leftout += step;
-        rightout += step;
-    }
 }
 
 void I_SubmitSound(void)
 {
-    int i;
-
-    if (!sound_initialized)
-        return;
-
-    SoundReclaimBuffers();
-
-    for (i = 0; i < AUDIO_BUFFER_COUNT; ++i)
-    {
-        MMRESULT result;
-
-        if (!sound_buffer_ready[i])
-            continue;
-
-        I_UpdateSound();
-        memcpy(sound_buffers[i], mixbuffer, MIXBUFFER_BYTES);
-
-        sound_headers[i].dwBufferLength = MIXBUFFER_BYTES;
-        sound_headers[i].dwFlags &= ~WHDR_DONE;
-        sound_buffer_ready[i] = 0;
-
-        result = waveOutWrite(sound_device, &sound_headers[i], sizeof(WAVEHDR));
-        if (result != MMSYSERR_NOERROR)
-            sound_buffer_ready[i] = 1;
-
-        return;
-    }
 }
 
 void I_UpdateSoundParams(int handle, int vol, int sep, int pitch)
 {
-    int i;
-    int rightvol;
-    int leftvol;
-
-    for (i = 0; i < NUM_CHANNELS; ++i)
-    {
-        if (channelhandles[i] != handle || !channels[i])
-            continue;
-
-        vol = MixerVolumeFromDoom(vol);
-        channelstep[i] = steptable[pitch];
-
-        sep += 1;
-        leftvol = vol - ((vol * sep * sep) >> 16);
-        sep = sep - 257;
-        rightvol = vol - ((vol * sep * sep) >> 16);
-
-        if (rightvol < 0)
-            rightvol = 0;
-        else if (rightvol > 127)
-            rightvol = 127;
-
-        if (leftvol < 0)
-            leftvol = 0;
-        else if (leftvol > 127)
-            leftvol = 127;
-
-        channelleftvol_lookup[i] = &vol_lookup[leftvol * 256];
-        channelrightvol_lookup[i] = &vol_lookup[rightvol * 256];
-        break;
-    }
+    handle = vol = sep = pitch = 0;
 }
 
 int I_StartSound(int id, int vol, int sep, int pitch, int priority)
 {
-    priority = 0;
-    return addsfx(id, vol, steptable[pitch], sep);
+    static int next_handle = 100;
+    BOOL result;
+    int handle;
+
+    vol = sep = pitch = priority = 0;
+
+    if (id <= 0 || id >= NUMSFX || !sfx_wave_data[id])
+        return 0;
+
+    result = PlaySoundA((LPCSTR)sfx_wave_data[id], NULL, SND_ASYNC | SND_MEMORY | SND_NODEFAULT);
+    if (!result)
+        return 0;
+
+    handle = next_handle++;
+    current_sound_handle = handle;
+    current_sound_endtic = gametic + ((lengths[id] * TICRATE) / SAMPLERATE) + 1;
+    return handle;
 }
 
 void I_ShutdownSound(void)
 {
     int i;
+
+    PlaySoundA(NULL, NULL, 0);
 
     for (i = 0; i < NUMSFX; ++i)
     {
@@ -1246,6 +1141,9 @@ void I_ShutdownSound(void)
             sfx_wave_size[i] = 0;
         }
     }
+
+    current_sound_handle = 0;
+    current_sound_endtic = 0;
 
     if (!sound_initialized)
         return;
