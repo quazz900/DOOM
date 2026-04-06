@@ -352,6 +352,7 @@ static LRESULT CALLBACK I_WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPA
 static void I_BlitFrame(HDC dc)
 {
     RECT client_rect;
+    RECT fill_rect;
     int client_width;
     int client_height;
     int scale_x;
@@ -389,7 +390,33 @@ static void I_BlitFrame(HDC dc)
     dest_y = (client_height - dest_height) / 2;
 
     SetStretchBltMode(dc, COLORONCOLOR);
-    PatBlt(dc, 0, 0, client_width, client_height, BLACKNESS);
+
+    if (dest_y > 0)
+    {
+        fill_rect.left = 0;
+        fill_rect.top = 0;
+        fill_rect.right = client_width;
+        fill_rect.bottom = dest_y;
+        FillRect(dc, &fill_rect, (HBRUSH)GetStockObject(BLACK_BRUSH));
+
+        fill_rect.top = dest_y + dest_height;
+        fill_rect.bottom = client_height;
+        FillRect(dc, &fill_rect, (HBRUSH)GetStockObject(BLACK_BRUSH));
+    }
+
+    if (dest_x > 0)
+    {
+        fill_rect.left = 0;
+        fill_rect.top = dest_y;
+        fill_rect.right = dest_x;
+        fill_rect.bottom = dest_y + dest_height;
+        FillRect(dc, &fill_rect, (HBRUSH)GetStockObject(BLACK_BRUSH));
+
+        fill_rect.left = dest_x + dest_width;
+        fill_rect.right = client_width;
+        FillRect(dc, &fill_rect, (HBRUSH)GetStockObject(BLACK_BRUSH));
+    }
+
     StretchDIBits(dc,
                   dest_x, dest_y, dest_width, dest_height,
                   0, 0, SCREENWIDTH, SCREENHEIGHT,
