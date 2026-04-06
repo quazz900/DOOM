@@ -640,6 +640,7 @@ void R_AddSprites (sector_t* sec)
 void R_DrawPSprite (pspdef_t* psp)
 {
     fixed_t		tx;
+    fixed_t		topoffset;
     int			x1;
     int			x2;
     spritedef_t*	sprdef;
@@ -686,7 +687,10 @@ void R_DrawPSprite (pspdef_t* psp)
     // store information in a vissprite
     vis = &avis;
     vis->mobjflags = 0;
-    vis->texturemid = (BASEYCENTER<<FRACBITS)+FRACUNIT/2-(psp->sy-spritetopoffset[lump]);
+    topoffset = spritetopoffset[lump];
+    if (topoffset < 0)
+        topoffset += spriteheight[lump];
+    vis->texturemid = (BASEYCENTER<<FRACBITS)+FRACUNIT/2-(psp->sy-topoffset);
     vis->x1 = x1 < 0 ? 0 : x1;
     vis->x2 = x2 >= viewwidth ? viewwidth-1 : x2;	
     vis->scale = pspritescale<<detailshift;

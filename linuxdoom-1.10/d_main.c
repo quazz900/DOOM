@@ -118,6 +118,7 @@ boolean		singletics = false; // debug flag to cancel adaptiveness
 //extern  int	musicVolume;
 
 extern  boolean	inhelpscreens;
+extern  int      detailLevel;
 
 skill_t		startskill;
 int             startepisode;
@@ -1032,6 +1033,9 @@ void D_DoomMain (void)
 
     printf ("M_LoadDefaults: Load system defaults.\n");
     M_LoadDefaults ();              // load before initing other systems
+#ifdef _WIN32
+    detailLevel = 0;
+#endif
 
     printf ("Z_Init: Init zone memory allocation daemon. \n");
     Z_Init ();
