@@ -61,6 +61,7 @@ static void I_PollXInput(void);
 static void I_TapKey(int key);
 static void I_CycleWeapon(int direction);
 static void I_SetVirtualKeyState(int *state, int key, int pressed);
+static void I_PostDoomKeyEvent(evtype_t type, int key);
 
 extern int usejoystick;
 extern int key_strafeleft;
@@ -145,14 +146,20 @@ static int I_TranslateKey(WPARAM key)
 
 static void I_PostKeyEvent(evtype_t type, WPARAM key)
 {
-    event_t event;
     int translated = I_TranslateKey(key);
 
     if (!translated)
         return;
 
+    I_PostDoomKeyEvent(type, translated);
+}
+
+static void I_PostDoomKeyEvent(evtype_t type, int key)
+{
+    event_t event;
+
     event.type = type;
-    event.data1 = translated;
+    event.data1 = key;
     event.data2 = 0;
     event.data3 = 0;
     D_PostEvent(&event);
@@ -264,7 +271,7 @@ static void I_SetVirtualKeyState(int *state, int key, int pressed)
         return;
 
     *state = pressed;
-    I_PostKeyEvent(pressed ? ev_keydown : ev_keyup, (WPARAM)key);
+    I_PostDoomKeyEvent(pressed ? ev_keydown : ev_keyup, key);
 }
 
 static void I_CycleWeapon(int direction)
