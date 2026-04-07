@@ -33,6 +33,10 @@ static int mouse_ignore_move;
 static int mouse_center_x;
 static int mouse_center_y;
 static int window_focused;
+static int window_fullscreen;
+static WINDOWPLACEMENT windowed_placement = { sizeof(windowed_placement) };
+static DWORD windowed_style;
+static DWORD windowed_ex_style;
 static HMODULE xinput_module;
 static DWORD (WINAPI *xinput_get_state)(DWORD, XINPUT_STATE *);
 static int xinput_connected;
@@ -55,6 +59,7 @@ static void I_UpdateMouseCenter(void);
 static void I_SetMouseCapture(boolean capture);
 static void I_RecenterMouse(void);
 static void I_SyncMouseCapture(void);
+static void I_ToggleFullscreen(void);
 static void I_InitXInput(void);
 static void I_ShutdownXInput(void);
 static void I_PollXInput(void);
@@ -555,6 +560,56 @@ static void I_SyncMouseCapture(void)
     I_SetMouseCapture(window_focused && !menuactive && !paused);
 }
 
+static void I_ToggleFullscreen(void)
+{
+    MONITORINFO monitor_info;
+
+    if (!doom_window)
+        return;
+
+    I_SetMouseCapture(false);
+
+    if (!window_fullscreen)
+    {
+        monitor_info.cbSize = sizeof(monitor_info);
+        windowed_style = (DWORD)GetWindowLongPtr(doom_window, GWL_STYLE);
+        windowed_ex_style = (DWORD)GetWindowLongPtr(doom_window, GWL_EXSTYLE);
+        GetWindowPlacement(doom_window, &windowed_placement);
+
+        if (GetMonitorInfo(MonitorFromWindow(doom_window, MONITOR_DEFAULTTONEAREST), &monitor_info))
+        {
+            SetWindowLongPtr(doom_window, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+            SetWindowLongPtr(doom_window, GWL_EXSTYLE, 0);
+            SetWindowPos(doom_window,
+                         HWND_TOP,
+                         monitor_info.rcMonitor.left,
+                         monitor_info.rcMonitor.top,
+                         monitor_info.rcMonitor.right - monitor_info.rcMonitor.left,
+                         monitor_info.rcMonitor.bottom - monitor_info.rcMonitor.top,
+                         SWP_FRAMECHANGED);
+            window_fullscreen = 1;
+        }
+    }
+    else
+    {
+        SetWindowLongPtr(doom_window, GWL_STYLE, windowed_style);
+        SetWindowLongPtr(doom_window, GWL_EXSTYLE, windowed_ex_style);
+        SetWindowPlacement(doom_window, &windowed_placement);
+        SetWindowPos(doom_window,
+                     NULL,
+                     0,
+                     0,
+                     0,
+                     0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        window_fullscreen = 0;
+    }
+
+    ShowWindow(doom_window, SW_SHOW);
+    I_UpdateMouseCenter();
+    I_SyncMouseCapture();
+}
+
 static LRESULT CALLBACK I_WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
     PAINTSTRUCT paint;
@@ -592,6 +647,11 @@ static LRESULT CALLBACK I_WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPA
 
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
+        if (message == WM_SYSKEYDOWN && wparam == VK_RETURN && (HIWORD(lparam) & KF_ALTDOWN))
+        {
+            I_ToggleFullscreen();
+            return 0;
+        }
         if ((HIWORD(lparam) & KF_REPEAT) == 0)
             I_PostKeyEvent(ev_keydown, wparam);
         return 0;
@@ -766,6 +826,7 @@ void I_ShutdownGraphics(void)
     mouse_buttons = 0;
     mouse_ignore_move = 0;
     window_focused = 0;
+    window_fullscreen = 0;
 
     if (doom_framebuffer)
     {
