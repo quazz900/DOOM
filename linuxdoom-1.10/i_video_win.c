@@ -944,6 +944,7 @@ void I_InitGraphics(void)
     SetForegroundWindow(doom_window);
     I_UpdateMouseCenter();
     window_focused = 1;
+    I_ToggleFullscreen();
     I_SyncMouseCapture();
 
     doom_framebuffer = (uint32_t *)malloc(sizeof(*doom_framebuffer) * SCREENWIDTH * SCREENHEIGHT);
