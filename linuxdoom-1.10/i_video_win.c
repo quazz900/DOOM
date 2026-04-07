@@ -14,6 +14,7 @@
 #include "doomstat.h"
 #include "i_system.h"
 #include "i_video.h"
+#include "g_game.h"
 #include "v_video.h"
 
 static const char *window_class_name = "DoomWin32Window";
@@ -44,6 +45,8 @@ static int xinput_prev_back_pressed;
 static int xinput_prev_accept_pressed;
 static int xinput_prev_prev_weapon_pressed;
 static int xinput_prev_next_weapon_pressed;
+static int xinput_prev_strafe_left;
+static int xinput_prev_strafe_right;
 
 static void I_BlitFrame(HDC dc);
 static void I_PostMouseEvent(int buttons, int delta_x, int delta_y);
@@ -57,8 +60,11 @@ static void I_ShutdownXInput(void);
 static void I_PollXInput(void);
 static void I_TapKey(int key);
 static void I_CycleWeapon(int direction);
+static void I_SetVirtualKeyState(int *state, int key, int pressed);
 
 extern int usejoystick;
+extern int key_strafeleft;
+extern int key_straferight;
 
 static int I_TranslateKey(WPARAM key)
 {
@@ -234,6 +240,8 @@ static void I_ShutdownXInput(void)
     xinput_prev_accept_pressed = 0;
     xinput_prev_prev_weapon_pressed = 0;
     xinput_prev_next_weapon_pressed = 0;
+    xinput_prev_strafe_left = 0;
+    xinput_prev_strafe_right = 0;
 
     if (xinput_module)
     {
@@ -248,6 +256,15 @@ static void I_TapKey(int key)
 {
     I_PostKeyEvent(ev_keydown, (WPARAM)key);
     I_PostKeyEvent(ev_keyup, (WPARAM)key);
+}
+
+static void I_SetVirtualKeyState(int *state, int key, int pressed)
+{
+    if (*state == pressed)
+        return;
+
+    *state = pressed;
+    I_PostKeyEvent(pressed ? ev_keydown : ev_keyup, (WPARAM)key);
 }
 
 static void I_CycleWeapon(int direction)
@@ -340,6 +357,8 @@ static void I_PollXInput(void)
         xinput_prev_accept_pressed = 0;
         xinput_prev_prev_weapon_pressed = 0;
         xinput_prev_next_weapon_pressed = 0;
+        I_SetVirtualKeyState(&xinput_prev_strafe_left, key_strafeleft, 0);
+        I_SetVirtualKeyState(&xinput_prev_strafe_right, key_straferight, 0);
         return;
     }
 
@@ -361,25 +380,44 @@ static void I_PollXInput(void)
         buttons |= 8;
     }
 
-    move_x = I_XInputAxisToMove(state.Gamepad.sThumbLX,
-                                XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE,
-                                0);
+    move_x = 0;
     move_y = I_XInputAxisToMove(state.Gamepad.sThumbLY,
                                 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE,
                                 1);
 
-    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT)
-        move_x = -1;
-    else if (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT)
-        move_x = 1;
+    if (in_menu)
+    {
+        if (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT)
+            move_x = -1;
+        else if (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT)
+            move_x = 1;
+    }
 
     if (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP)
         move_y = -1;
     else if (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN)
         move_y = 1;
 
-    if (!in_menu && move_x)
-        buttons |= 2;
+    if (!in_menu)
+    {
+        int strafe_x = I_XInputAxisToMove(state.Gamepad.sThumbLX,
+                                          XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE,
+                                          0);
+        int dpad_left = (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) != 0;
+        int dpad_right = (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) != 0;
+
+        I_SetVirtualKeyState(&xinput_prev_strafe_left,
+                             key_strafeleft,
+                             strafe_x < 0 || dpad_left);
+        I_SetVirtualKeyState(&xinput_prev_strafe_right,
+                             key_straferight,
+                             strafe_x > 0 || dpad_right);
+    }
+    else
+    {
+        I_SetVirtualKeyState(&xinput_prev_strafe_left, key_strafeleft, 0);
+        I_SetVirtualKeyState(&xinput_prev_strafe_right, key_straferight, 0);
+    }
 
     turn_x = 0;
     if (!menuactive && !paused && gamestate == GS_LEVEL && !automapactive)
