@@ -370,7 +370,7 @@ static void I_PollXInput(void)
         if (raw_turn > XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE
             || raw_turn < -XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE)
         {
-            turn_x = -(raw_turn / 1024);
+            turn_x = raw_turn / 256;
         }
     }
 
