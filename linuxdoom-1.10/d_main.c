@@ -119,6 +119,7 @@ boolean		singletics = false; // debug flag to cancel adaptiveness
 
 extern  boolean	inhelpscreens;
 extern  int      detailLevel;
+extern  int      usejoystick;
 
 skill_t		startskill;
 int             startepisode;
@@ -1035,6 +1036,7 @@ void D_DoomMain (void)
     M_LoadDefaults ();              // load before initing other systems
 #ifdef _WIN32
     detailLevel = 0;
+    usejoystick = 1;
 #endif
 
     printf ("Z_Init: Init zone memory allocation daemon. \n");

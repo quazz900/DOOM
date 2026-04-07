@@ -1,11 +1,13 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <windowsx.h>
+#include <xinput.h>
 
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 
+#include "d_event.h"
 #include "d_main.h"
 #include "doomdef.h"
 #include "doomstat.h"
@@ -29,13 +31,26 @@ static int mouse_ignore_move;
 static int mouse_center_x;
 static int mouse_center_y;
 static int window_focused;
+static HMODULE xinput_module;
+static DWORD (WINAPI *xinput_get_state)(DWORD, XINPUT_STATE *);
+static int xinput_connected;
+static int xinput_prev_move_x;
+static int xinput_prev_move_y;
+static int xinput_prev_buttons;
+static int xinput_prev_start_pressed;
 
 static void I_BlitFrame(HDC dc);
 static void I_PostMouseEvent(int buttons, int delta_x, int delta_y);
+static void I_PostJoystickEvent(int buttons, int move_x, int move_y);
 static void I_UpdateMouseCenter(void);
 static void I_SetMouseCapture(boolean capture);
 static void I_RecenterMouse(void);
 static void I_SyncMouseCapture(void);
+static void I_InitXInput(void);
+static void I_ShutdownXInput(void);
+static void I_PollXInput(void);
+
+extern int usejoystick;
 
 static int I_TranslateKey(WPARAM key)
 {
@@ -152,6 +167,145 @@ static void I_PostMouseEvent(int buttons, int delta_x, int delta_y)
     event.data2 = delta_x;
     event.data3 = delta_y;
     D_PostEvent(&event);
+}
+
+static void I_PostJoystickEvent(int buttons, int move_x, int move_y)
+{
+    event_t event;
+
+    event.type = ev_joystick;
+    event.data1 = buttons;
+    event.data2 = move_x;
+    event.data3 = move_y;
+    D_PostEvent(&event);
+}
+
+static int I_XInputAxisToMove(SHORT value, SHORT deadzone, int invert)
+{
+    if (value > deadzone)
+        return invert ? -1 : 1;
+    if (value < -deadzone)
+        return invert ? 1 : -1;
+    return 0;
+}
+
+static void I_InitXInput(void)
+{
+    static const char *dll_names[] = {
+        "xinput1_4.dll",
+        "xinput1_3.dll",
+        "xinput9_1_0.dll"
+    };
+    int i;
+
+    for (i = 0; i < (int)(sizeof(dll_names) / sizeof(dll_names[0])); ++i)
+    {
+        xinput_module = LoadLibraryA(dll_names[i]);
+        if (!xinput_module)
+            continue;
+
+        xinput_get_state = (DWORD (WINAPI *)(DWORD, XINPUT_STATE *))
+            GetProcAddress(xinput_module, "XInputGetState");
+        if (xinput_get_state)
+            return;
+
+        FreeLibrary(xinput_module);
+        xinput_module = NULL;
+    }
+}
+
+static void I_ShutdownXInput(void)
+{
+    xinput_connected = 0;
+    xinput_prev_move_x = 0;
+    xinput_prev_move_y = 0;
+    xinput_prev_buttons = 0;
+    xinput_prev_start_pressed = 0;
+
+    if (xinput_module)
+    {
+        FreeLibrary(xinput_module);
+        xinput_module = NULL;
+    }
+
+    xinput_get_state = NULL;
+}
+
+static void I_PollXInput(void)
+{
+    XINPUT_STATE state;
+    DWORD result;
+    int buttons;
+    int move_x;
+    int move_y;
+    int start_pressed;
+
+    if (!xinput_get_state || !usejoystick)
+        return;
+
+    memset(&state, 0, sizeof(state));
+    result = xinput_get_state(0, &state);
+    if (result != ERROR_SUCCESS)
+    {
+        if (xinput_connected)
+        {
+            I_PostJoystickEvent(0, 0, 0);
+            if (xinput_prev_start_pressed)
+                I_PostKeyEvent(ev_keyup, VK_ESCAPE);
+        }
+
+        xinput_connected = 0;
+        xinput_prev_move_x = 0;
+        xinput_prev_move_y = 0;
+        xinput_prev_buttons = 0;
+        xinput_prev_start_pressed = 0;
+        return;
+    }
+
+    buttons = 0;
+    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_A)
+        buttons |= 1;
+    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_X)
+        buttons |= 2;
+    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER)
+        buttons |= 4;
+    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_B)
+        buttons |= 8;
+
+    move_x = I_XInputAxisToMove(state.Gamepad.sThumbLX,
+                                XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE,
+                                1);
+    move_y = I_XInputAxisToMove(state.Gamepad.sThumbLY,
+                                XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE,
+                                1);
+
+    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT)
+        move_x = -1;
+    else if (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT)
+        move_x = 1;
+
+    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP)
+        move_y = -1;
+    else if (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN)
+        move_y = 1;
+
+    start_pressed = (state.Gamepad.wButtons & XINPUT_GAMEPAD_START) != 0;
+    if (start_pressed != xinput_prev_start_pressed)
+        I_PostKeyEvent(start_pressed ? ev_keydown : ev_keyup, VK_ESCAPE);
+
+    if (!xinput_connected
+        || buttons != xinput_prev_buttons
+        || move_x != xinput_prev_move_x
+        || move_y != xinput_prev_move_y)
+    {
+        I_PostJoystickEvent(buttons, move_x, move_y);
+    }
+
+    xinput_connected = 1;
+    xinput_prev_move_x = move_x;
+    xinput_prev_move_y = move_y;
+    xinput_prev_buttons = buttons;
+    xinput_prev_start_pressed = start_pressed;
 }
 
 static void I_UpdateMouseCenter(void)
@@ -444,6 +598,8 @@ void I_ShutdownGraphics(void)
         free(doom_framebuffer);
         doom_framebuffer = NULL;
     }
+
+    I_ShutdownXInput();
 }
 
 void I_StartFrame(void)
@@ -474,6 +630,8 @@ void I_StartTic(void)
         track.dwHoverTime = 0;
         TrackMouseEvent(&track);
     }
+
+    I_PollXInput();
 }
 
 void I_UpdateNoBlit(void)
@@ -512,6 +670,8 @@ void I_InitGraphics(void)
 
     if (doom_window)
         return;
+
+    I_InitXInput();
 
     memset(&window_class, 0, sizeof(window_class));
     window_class.style = CS_OWNDC;
