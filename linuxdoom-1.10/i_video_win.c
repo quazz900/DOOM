@@ -20,6 +20,8 @@
 static const char *window_class_name = "DoomWin32Window";
 static const int doom_output_width = 640;
 static const int doom_output_height = 480;
+static const int doom_fullscreen_width = 1920;
+static const int doom_fullscreen_height = 1080;
 
 static HWND doom_window;
 static BITMAPINFO doom_bitmap_info;
@@ -591,14 +593,29 @@ static void I_ToggleFullscreen(void)
 
         if (GetMonitorInfo(MonitorFromWindow(doom_window, MONITOR_DEFAULTTONEAREST), &monitor_info))
         {
+            int monitor_width = monitor_info.rcMonitor.right - monitor_info.rcMonitor.left;
+            int monitor_height = monitor_info.rcMonitor.bottom - monitor_info.rcMonitor.top;
+            int fullscreen_width = doom_fullscreen_width;
+            int fullscreen_height = doom_fullscreen_height;
+            int fullscreen_x;
+            int fullscreen_y;
+
+            if (fullscreen_width > monitor_width)
+                fullscreen_width = monitor_width;
+            if (fullscreen_height > monitor_height)
+                fullscreen_height = monitor_height;
+
+            fullscreen_x = monitor_info.rcMonitor.left + (monitor_width - fullscreen_width) / 2;
+            fullscreen_y = monitor_info.rcMonitor.top + (monitor_height - fullscreen_height) / 2;
+
             SetWindowLongPtr(doom_window, GWL_STYLE, WS_POPUP | WS_VISIBLE);
             SetWindowLongPtr(doom_window, GWL_EXSTYLE, 0);
             SetWindowPos(doom_window,
                          HWND_TOP,
-                         monitor_info.rcMonitor.left,
-                         monitor_info.rcMonitor.top,
-                         monitor_info.rcMonitor.right - monitor_info.rcMonitor.left,
-                         monitor_info.rcMonitor.bottom - monitor_info.rcMonitor.top,
+                         fullscreen_x,
+                         fullscreen_y,
+                         fullscreen_width,
+                         fullscreen_height,
                          SWP_FRAMECHANGED);
             window_fullscreen = 1;
         }
