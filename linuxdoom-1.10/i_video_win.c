@@ -354,7 +354,7 @@ static void I_PollXInput(void)
 
     move_x = I_XInputAxisToMove(state.Gamepad.sThumbLX,
                                 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE,
-                                1);
+                                0);
     move_y = I_XInputAxisToMove(state.Gamepad.sThumbLY,
                                 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE,
                                 1);
