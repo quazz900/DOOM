@@ -349,8 +349,17 @@ static void I_PollXInput(void)
         buttons |= 1;
     if (state.Gamepad.bLeftTrigger >= XINPUT_GAMEPAD_TRIGGER_THRESHOLD)
         buttons |= 4;
-    if (!in_menu && (state.Gamepad.wButtons & XINPUT_GAMEPAD_A))
+    if (in_menu)
+    {
+        if (state.Gamepad.wButtons & XINPUT_GAMEPAD_A)
+            buttons |= 1;
+        if (state.Gamepad.wButtons & XINPUT_GAMEPAD_B)
+            buttons |= 2;
+    }
+    else if (state.Gamepad.wButtons & XINPUT_GAMEPAD_A)
+    {
         buttons |= 8;
+    }
 
     move_x = I_XInputAxisToMove(state.Gamepad.sThumbLX,
                                 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE,
@@ -395,19 +404,10 @@ static void I_PollXInput(void)
     if (map_pressed && !xinput_prev_map_pressed)
         I_TapKey(KEY_TAB);
 
-    if ((state.Gamepad.wButtons & XINPUT_GAMEPAD_A) != 0)
-    {
-        if (in_menu && !xinput_prev_accept_pressed)
-            I_TapKey(KEY_ENTER);
-        xinput_prev_accept_pressed = 1;
-    }
-    else
-    {
-        xinput_prev_accept_pressed = 0;
-    }
+    xinput_prev_accept_pressed = (state.Gamepad.wButtons & XINPUT_GAMEPAD_A) != 0;
 
     back_pressed = (state.Gamepad.wButtons & XINPUT_GAMEPAD_B) != 0;
-    if (in_menu && back_pressed && !xinput_prev_back_pressed)
+    if (!in_menu && back_pressed && !xinput_prev_back_pressed)
         I_TapKey(KEY_BACKSPACE);
 
     prev_weapon_pressed = (state.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) != 0;
