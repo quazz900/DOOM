@@ -51,6 +51,7 @@ static int xinput_prev_prev_weapon_pressed;
 static int xinput_prev_next_weapon_pressed;
 static int xinput_prev_strafe_left;
 static int xinput_prev_strafe_right;
+static int xinput_weapon_key_down;
 
 static void I_BlitFrame(HDC dc);
 static void I_PostMouseEvent(int buttons, int delta_x, int delta_y);
@@ -63,7 +64,6 @@ static void I_ToggleFullscreen(void);
 static void I_InitXInput(void);
 static void I_ShutdownXInput(void);
 static void I_PollXInput(void);
-static void I_TapKey(int key);
 static void I_CycleWeapon(int direction);
 static void I_SetVirtualKeyState(int *state, int key, int pressed);
 static void I_PostDoomKeyEvent(evtype_t type, int key);
@@ -170,6 +170,12 @@ static void I_PostDoomKeyEvent(evtype_t type, int key)
     D_PostEvent(&event);
 }
 
+static void I_TapKey(int key)
+{
+    I_PostKeyEvent(ev_keydown, (WPARAM)key);
+    I_PostKeyEvent(ev_keyup, (WPARAM)key);
+}
+
 static int I_MouseButtonsFromWParam(WPARAM wparam)
 {
     int buttons = 0;
@@ -254,6 +260,7 @@ static void I_ShutdownXInput(void)
     xinput_prev_next_weapon_pressed = 0;
     xinput_prev_strafe_left = 0;
     xinput_prev_strafe_right = 0;
+    xinput_weapon_key_down = 0;
 
     if (xinput_module)
     {
@@ -262,12 +269,6 @@ static void I_ShutdownXInput(void)
     }
 
     xinput_get_state = NULL;
-}
-
-static void I_TapKey(int key)
-{
-    I_PostKeyEvent(ev_keydown, (WPARAM)key);
-    I_PostKeyEvent(ev_keyup, (WPARAM)key);
 }
 
 static void I_SetVirtualKeyState(int *state, int key, int pressed)
@@ -324,7 +325,8 @@ static void I_CycleWeapon(int direction)
 
         if (player->weaponowned[next_weapon])
         {
-            I_TapKey('1' + next_index);
+            xinput_weapon_key_down = '1' + next_index;
+            I_PostDoomKeyEvent(ev_keydown, xinput_weapon_key_down);
             return;
         }
     }
@@ -352,6 +354,11 @@ static void I_PollXInput(void)
     result = xinput_get_state(0, &state);
     if (result != ERROR_SUCCESS)
     {
+        if (xinput_weapon_key_down)
+        {
+            I_PostDoomKeyEvent(ev_keyup, xinput_weapon_key_down);
+            xinput_weapon_key_down = 0;
+        }
         if (xinput_connected)
         {
             I_PostJoystickEvent(0, 0, 0);
@@ -372,6 +379,12 @@ static void I_PollXInput(void)
         I_SetVirtualKeyState(&xinput_prev_strafe_left, key_strafeleft, 0);
         I_SetVirtualKeyState(&xinput_prev_strafe_right, key_straferight, 0);
         return;
+    }
+
+    if (xinput_weapon_key_down)
+    {
+        I_PostDoomKeyEvent(ev_keyup, xinput_weapon_key_down);
+        xinput_weapon_key_down = 0;
     }
 
     in_menu = menuactive || paused || gamestate != GS_LEVEL;
