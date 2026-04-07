@@ -1009,7 +1009,11 @@ void M_ChangeMessages(int choice)
 //
 void M_EndGameResponse(int ch)
 {
-    if (ch != 'y')
+    if (ch != 'y'
+#ifdef _WIN32
+        && ch != KEY_ENTER
+#endif
+        )
 	return;
 		
     currentMenu->lastOn = itemOn;
@@ -1093,7 +1097,11 @@ int     quitsounds2[8] =
 
 void M_QuitResponse(int ch)
 {
-    if (ch != 'y')
+    if (ch != 'y'
+#ifdef _WIN32
+        && ch != KEY_ENTER
+#endif
+        )
 	return;
     if (!netgame)
     {
@@ -1509,7 +1517,11 @@ boolean M_Responder (event_t* ev)
     if (messageToPrint)
     {
 	if (messageNeedsInput == true &&
-	    !(ch == ' ' || ch == 'n' || ch == 'y' || ch == KEY_ESCAPE))
+	    !(ch == ' ' || ch == 'n' || ch == 'y' || ch == KEY_ESCAPE
+#ifdef _WIN32
+	      || ch == KEY_ENTER
+#endif
+	      ))
 	    return false;
 		
 	menuactive = messageLastMenuActive;

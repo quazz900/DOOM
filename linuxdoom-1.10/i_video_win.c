@@ -18,14 +18,14 @@
 #include "v_video.h"
 
 static const char *window_class_name = "DoomWin32Window";
-static const int doom_output_width = 320;
-static const int doom_output_height = 240;
+static const int doom_output_width = 640;
+static const int doom_output_height = 480;
 
 static HWND doom_window;
 static BITMAPINFO doom_bitmap_info;
 static uint32_t *doom_framebuffer;
 static byte current_palette[256 * 3];
-static int window_scale = 2;
+static int window_scale = 1;
 static int mouse_initialized;
 static int mouse_buttons;
 static int mouse_captured;

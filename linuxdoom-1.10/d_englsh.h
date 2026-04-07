@@ -61,9 +61,13 @@
 #define MSGOFF	"Messages OFF"
 #define MSGON		"Messages ON"
 #define NETEND	"you can't end a netgame!\n\n"PRESSKEY
+#ifdef _WIN32
+#define ENDGAME	"are you sure you want to end the game?\n\npress y or a/enter."
+#define DOSY		"(press y or a/enter to quit)"
+#else
 #define ENDGAME	"are you sure you want to end the game?\n\n"PRESSYN
-
 #define DOSY		"(press y to quit)"
+#endif
 
 #define DETAILHI	"High detail"
 #define DETAILLO	"Low detail"
