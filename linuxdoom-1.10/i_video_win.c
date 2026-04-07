@@ -9,6 +9,7 @@
 
 #include "d_event.h"
 #include "d_main.h"
+#include "d_player.h"
 #include "doomdef.h"
 #include "doomstat.h"
 #include "i_system.h"
@@ -38,6 +39,10 @@ static int xinput_prev_move_x;
 static int xinput_prev_move_y;
 static int xinput_prev_buttons;
 static int xinput_prev_start_pressed;
+static int xinput_prev_map_pressed;
+static int xinput_prev_back_pressed;
+static int xinput_prev_prev_weapon_pressed;
+static int xinput_prev_next_weapon_pressed;
 
 static void I_BlitFrame(HDC dc);
 static void I_PostMouseEvent(int buttons, int delta_x, int delta_y);
@@ -49,6 +54,8 @@ static void I_SyncMouseCapture(void);
 static void I_InitXInput(void);
 static void I_ShutdownXInput(void);
 static void I_PollXInput(void);
+static void I_TapKey(int key);
+static void I_CycleWeapon(int direction);
 
 extern int usejoystick;
 
@@ -221,6 +228,10 @@ static void I_ShutdownXInput(void)
     xinput_prev_move_y = 0;
     xinput_prev_buttons = 0;
     xinput_prev_start_pressed = 0;
+    xinput_prev_map_pressed = 0;
+    xinput_prev_back_pressed = 0;
+    xinput_prev_prev_weapon_pressed = 0;
+    xinput_prev_next_weapon_pressed = 0;
 
     if (xinput_module)
     {
@@ -231,6 +242,63 @@ static void I_ShutdownXInput(void)
     xinput_get_state = NULL;
 }
 
+static void I_TapKey(int key)
+{
+    I_PostKeyEvent(ev_keydown, (WPARAM)key);
+    I_PostKeyEvent(ev_keyup, (WPARAM)key);
+}
+
+static void I_CycleWeapon(int direction)
+{
+    static const weapontype_t weapon_order[] = {
+        wp_fist,
+        wp_pistol,
+        wp_shotgun,
+        wp_chaingun,
+        wp_missile,
+        wp_plasma,
+        wp_bfg
+    };
+    const player_t *player;
+    weapontype_t current_weapon;
+    int current_index;
+    int i;
+
+    if (gamestate != GS_LEVEL)
+        return;
+
+    player = &players[consoleplayer];
+    current_weapon = player->pendingweapon != wp_nochange ? player->pendingweapon : player->readyweapon;
+
+    if (current_weapon == wp_chainsaw)
+        current_weapon = wp_fist;
+    else if (current_weapon == wp_supershotgun)
+        current_weapon = wp_shotgun;
+
+    current_index = 0;
+    for (i = 0; i < (int)(sizeof(weapon_order) / sizeof(weapon_order[0])); ++i)
+    {
+        if (weapon_order[i] == current_weapon)
+        {
+            current_index = i;
+            break;
+        }
+    }
+
+    for (i = 1; i <= (int)(sizeof(weapon_order) / sizeof(weapon_order[0])); ++i)
+    {
+        int next_index = (current_index + direction * i + (int)(sizeof(weapon_order) / sizeof(weapon_order[0]))) %
+                         (int)(sizeof(weapon_order) / sizeof(weapon_order[0]));
+        weapontype_t next_weapon = weapon_order[next_index];
+
+        if (player->weaponowned[next_weapon])
+        {
+            I_TapKey('1' + next_index);
+            return;
+        }
+    }
+}
+
 static void I_PollXInput(void)
 {
     XINPUT_STATE state;
@@ -238,7 +306,12 @@ static void I_PollXInput(void)
     int buttons;
     int move_x;
     int move_y;
+    int turn_x;
     int start_pressed;
+    int map_pressed;
+    int back_pressed;
+    int prev_weapon_pressed;
+    int next_weapon_pressed;
 
     if (!xinput_get_state || !usejoystick)
         return;
@@ -259,17 +332,19 @@ static void I_PollXInput(void)
         xinput_prev_move_y = 0;
         xinput_prev_buttons = 0;
         xinput_prev_start_pressed = 0;
+        xinput_prev_map_pressed = 0;
+        xinput_prev_back_pressed = 0;
+        xinput_prev_prev_weapon_pressed = 0;
+        xinput_prev_next_weapon_pressed = 0;
         return;
     }
 
     buttons = 0;
-    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_A)
+    if (state.Gamepad.bRightTrigger >= XINPUT_GAMEPAD_TRIGGER_THRESHOLD)
         buttons |= 1;
-    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_X)
-        buttons |= 2;
-    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER)
+    if (state.Gamepad.bLeftTrigger >= XINPUT_GAMEPAD_TRIGGER_THRESHOLD)
         buttons |= 4;
-    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_B)
+    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_A)
         buttons |= 8;
 
     move_x = I_XInputAxisToMove(state.Gamepad.sThumbLX,
@@ -289,9 +364,40 @@ static void I_PollXInput(void)
     else if (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN)
         move_y = 1;
 
+    turn_x = 0;
+    if (!menuactive && !paused && gamestate == GS_LEVEL && !automapactive)
+    {
+        int raw_turn = state.Gamepad.sThumbRX;
+
+        if (raw_turn > XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE
+            || raw_turn < -XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE)
+        {
+            turn_x = raw_turn / 2048;
+        }
+    }
+
+    if (turn_x)
+        I_PostMouseEvent(mouse_buttons, turn_x, 0);
+
     start_pressed = (state.Gamepad.wButtons & XINPUT_GAMEPAD_START) != 0;
     if (start_pressed != xinput_prev_start_pressed)
         I_PostKeyEvent(start_pressed ? ev_keydown : ev_keyup, VK_ESCAPE);
+
+    map_pressed = (state.Gamepad.wButtons & XINPUT_GAMEPAD_Y) != 0;
+    if (map_pressed && !xinput_prev_map_pressed)
+        I_TapKey(KEY_TAB);
+
+    back_pressed = (state.Gamepad.wButtons & XINPUT_GAMEPAD_B) != 0;
+    if (back_pressed && !xinput_prev_back_pressed)
+        I_TapKey(KEY_BACKSPACE);
+
+    prev_weapon_pressed = (state.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) != 0;
+    if (prev_weapon_pressed && !xinput_prev_prev_weapon_pressed)
+        I_CycleWeapon(-1);
+
+    next_weapon_pressed = (state.Gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER) != 0;
+    if (next_weapon_pressed && !xinput_prev_next_weapon_pressed)
+        I_CycleWeapon(1);
 
     if (!xinput_connected
         || buttons != xinput_prev_buttons
@@ -306,6 +412,10 @@ static void I_PollXInput(void)
     xinput_prev_move_y = move_y;
     xinput_prev_buttons = buttons;
     xinput_prev_start_pressed = start_pressed;
+    xinput_prev_map_pressed = map_pressed;
+    xinput_prev_back_pressed = back_pressed;
+    xinput_prev_prev_weapon_pressed = prev_weapon_pressed;
+    xinput_prev_next_weapon_pressed = next_weapon_pressed;
 }
 
 static void I_UpdateMouseCenter(void)
