@@ -347,9 +347,7 @@ static void I_PollXInput(void)
     if (state.Gamepad.wButtons & XINPUT_GAMEPAD_A)
         buttons |= 8;
 
-    move_x = I_XInputAxisToMove(state.Gamepad.sThumbLX,
-                                XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE,
-                                1);
+    move_x = 0;
     move_y = I_XInputAxisToMove(state.Gamepad.sThumbLY,
                                 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE,
                                 1);
@@ -372,7 +370,7 @@ static void I_PollXInput(void)
         if (raw_turn > XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE
             || raw_turn < -XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE)
         {
-            turn_x = raw_turn / 2048;
+            turn_x = -(raw_turn / 1024);
         }
     }
 
