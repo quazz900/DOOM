@@ -1035,6 +1035,9 @@ void D_DoomMain (void)
 
     printf ("W_Init: Init WADfiles.\n");
     W_InitMultipleFiles (wadfiles);
+
+    if (gamemode == registered && W_CheckNumForName("E4M1") != -1)
+	gamemode = retail;
     
 
     // Check for -file in shareware

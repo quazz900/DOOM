@@ -1386,7 +1386,7 @@ G_InitNew
     if (episode < 1)
       episode = 1; 
 
-    if ( gamemode == retail )
+    if ( gamemode == retail || W_CheckNumForName("E4M1") != -1 )
     {
       if (episode > 4)
 	episode = 4;
