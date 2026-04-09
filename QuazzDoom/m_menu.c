@@ -178,6 +178,16 @@ M_HelpPageName(void)
 	return "HELP1";
     return "CREDIT";
 }
+
+static boolean
+M_HasEpisode4(void)
+{
+    if (gamemode == retail)
+	return true;
+
+    return W_CheckNumForName("E4M1") != -1;
+}
+
 short		whichSkull;		// which skull to draw
 
 // graphic name of skulls
@@ -952,8 +962,7 @@ void M_Episode(int choice)
     }
 
     // Yet another hack...
-    if ( (gamemode == registered)
-	 && (choice > 2))
+    if ( choice > 2 && !M_HasEpisode4())
     {
       fprintf( stderr,
 	       "M_Episode: 4th episode requires UltimateDOOM\n");
@@ -1892,6 +1901,7 @@ void M_Ticker (void)
 //
 void M_Init (void)
 {
+    EpiDef.numitems = ep_end;
     currentMenu = &MainDef;
     menuactive = 0;
     itemOn = currentMenu->lastOn;
@@ -1926,8 +1936,8 @@ void M_Init (void)
 	// Episode 2 and 3 are handled,
 	//  branching to an ad screen.
       case registered:
-	// We need to remove the fourth episode.
-	EpiDef.numitems--;
+	if (!M_HasEpisode4())
+	    EpiDef.numitems--;
 	break;
       case retail:
 	// We are fine.
