@@ -911,7 +911,18 @@ void M_DrawEpisode(void)
 
 void M_VerifyNightmare(int ch)
 {
-    if (ch != 'y')
+    if (ch == KEY_BACKSPACE || ch == KEY_ESCAPE || ch == 'n')
+    {
+	if (currentMenu && currentMenu->prevMenu)
+	    M_SetupNextMenu(currentMenu->prevMenu);
+	return;
+    }
+
+    if (ch != 'y'
+#ifdef _WIN32
+        && ch != KEY_ENTER
+#endif
+        )
 	return;
 		
     G_DeferedInitNew(nightmare,epi+1,1);
@@ -1519,7 +1530,7 @@ boolean M_Responder (event_t* ev)
 	if (messageNeedsInput == true &&
 	    !(ch == ' ' || ch == 'n' || ch == 'y' || ch == KEY_ESCAPE
 #ifdef _WIN32
-	      || ch == KEY_ENTER
+	      || ch == KEY_ENTER || ch == KEY_BACKSPACE
 #endif
 	      ))
 	    return false;
@@ -1529,7 +1540,6 @@ boolean M_Responder (event_t* ev)
 	if (messageRoutine)
 	    messageRoutine(ch);
 			
-	menuactive = false;
 	S_StartSound(NULL,sfx_swtchx);
 	return true;
     }
@@ -1716,6 +1726,12 @@ boolean M_Responder (event_t* ev)
 	    currentMenu = currentMenu->prevMenu;
 	    itemOn = currentMenu->lastOn;
 	    S_StartSound(NULL,sfx_swtchn);
+	}
+	else if (paused && gamestate == GS_LEVEL)
+	{
+	    M_ClearMenus ();
+	    sendpause = true;
+	    S_StartSound(NULL,sfx_swtchx);
 	}
 	return true;
 	
