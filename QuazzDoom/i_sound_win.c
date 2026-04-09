@@ -75,6 +75,8 @@ static int music_thread_running;
 static HANDLE music_thread;
 static HANDLE music_wake_event;
 static HMIDIOUT music_out_device;
+static unsigned char music_channel_volume[16];
+static unsigned char music_channel_expression[16];
 
 typedef struct
 {
@@ -629,6 +631,22 @@ static void MusicSilenceAllChannels(void)
     }
 }
 
+static void MusicResetChannelState(void)
+{
+    int channel;
+
+    for (channel = 0; channel < 16; ++channel)
+    {
+        music_channel_volume[channel] = 127;
+        music_channel_expression[channel] = 127;
+    }
+}
+
+static unsigned char MusicScaleControllerValue(unsigned char value)
+{
+    return (unsigned char)((value * MixerVolumeFromDoom(snd_MusicVolume)) / 127);
+}
+
 static int MusicWaitUntil(ULONGLONG *target_time_ms)
 {
     for (;;)
@@ -672,9 +690,31 @@ static int MusicSendShortMessage(unsigned char status,
                                  int has_two_data_bytes)
 {
     DWORD message;
+    int channel;
 
     if (!music_out_device)
         return 0;
+
+    channel = status & 0x0f;
+
+    if (has_two_data_bytes && (status & 0xf0) == 0xb0)
+    {
+        if (data1 == 0x07)
+        {
+            music_channel_volume[channel] = data2;
+            data2 = MusicScaleControllerValue(data2);
+        }
+        else if (data1 == 0x0b)
+        {
+            music_channel_expression[channel] = data2;
+            data2 = MusicScaleControllerValue(data2);
+        }
+        else if (data1 == 0x79)
+        {
+            music_channel_volume[channel] = 127;
+            music_channel_expression[channel] = 127;
+        }
+    }
 
     message = status | ((DWORD)data1 << 8);
     if (has_two_data_bytes)
@@ -896,19 +936,16 @@ static unsigned char *CreateWaveData(const unsigned char *samples, int sample_co
 static void MusicApplyVolume(void)
 {
     int channel;
-    int volume;
 
     if (!music_out_device)
         return;
 
-    volume = MixerVolumeFromDoom(snd_MusicVolume);
-
     for (channel = 0; channel < 16; ++channel)
     {
         MusicSendShortMessage((unsigned char)(0xB0 | channel), 0x07,
-                              (unsigned char)volume, 1);
+                              music_channel_volume[channel], 1);
         MusicSendShortMessage((unsigned char)(0xB0 | channel), 0x0B,
-                              (unsigned char)volume, 1);
+                              music_channel_expression[channel], 1);
     }
 }
 
@@ -1506,6 +1543,7 @@ void I_InitMusic(void)
 
     music_stop_request = 0;
     music_shutdown_request = 0;
+    MusicResetChannelState();
     music_thread_running = 1;
     music_thread = CreateThread(NULL, 0, MusicThreadProc, NULL, 0, NULL);
     if (!music_thread)
@@ -1576,9 +1614,11 @@ void I_PlaySong(int handle, int looping)
         return;
 
     music_stop_request = 0;
+    MusicResetChannelState();
     music_current_handle = handle;
     music_looping = looping;
     music_paused = 0;
+    MusicApplyVolume();
     if (music_wake_event)
         SetEvent(music_wake_event);
 }
