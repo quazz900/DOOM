@@ -1727,10 +1727,11 @@ boolean M_Responder (event_t* ev)
 	    itemOn = currentMenu->lastOn;
 	    S_StartSound(NULL,sfx_swtchn);
 	}
-	else if (paused && gamestate == GS_LEVEL)
+	else if (gamestate == GS_LEVEL)
 	{
 	    M_ClearMenus ();
-	    sendpause = true;
+	    if (paused)
+		sendpause = true;
 	    S_StartSound(NULL,sfx_swtchx);
 	}
 	return true;
