@@ -1572,6 +1572,12 @@ void G_BeginRecording (void)
 //
 
 char*	defdemoname; 
+
+static boolean
+G_IsSupportedDemoVersion(int version)
+{
+    return version == 109 || version == VERSION;
+}
  
 void G_DeferedPlayDemo (char* name) 
 { 
@@ -1583,13 +1589,17 @@ void G_DoPlayDemo (void)
 { 
     skill_t skill; 
     int             i, episode, map; 
+    int             demoversion;
 	 
     gameaction = ga_nothing; 
     demobuffer = demo_p = W_CacheLumpName (defdemoname, PU_STATIC); 
-    if ( *demo_p++ != VERSION)
+    demoversion = *demo_p++;
+    if (!G_IsSupportedDemoVersion(demoversion))
     {
-      fprintf( stderr, "Demo is from a different game version!\n");
+      fprintf( stderr, "Demo %s uses unsupported version %i.\n",
+               defdemoname, demoversion);
       gameaction = ga_nothing;
+      D_AdvanceDemo ();
       return;
     }
     
