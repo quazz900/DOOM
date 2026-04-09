@@ -98,14 +98,17 @@ extern boolean demorecording;
 void I_Error(char *error, ...)
 {
     va_list argptr;
+    char message[2048];
+    int offset;
 
     va_start(argptr, error);
-    fprintf(stderr, "Error: ");
-    vfprintf(stderr, error, argptr);
-    fprintf(stderr, "\n");
+    offset = sprintf(message, "Error: ");
+    vsnprintf(message + offset, sizeof(message) - offset, error, argptr);
     va_end(argptr);
 
+    fprintf(stderr, "%s\n", message);
     fflush(stderr);
+    MessageBoxA(NULL, message, "QuazzDoom Error", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
 
     if (demorecording)
         G_CheckDemoStatus();

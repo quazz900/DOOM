@@ -13,11 +13,23 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR command_line, i
     LPWSTR *argv_wide;
     char **argv_utf8;
     int i;
+    wchar_t module_path[MAX_PATH];
+    wchar_t *last_slash;
 
     instance = instance;
     previous = previous;
     command_line = command_line;
     show_command = show_command;
+
+    if (GetModuleFileNameW(NULL, module_path, MAX_PATH))
+    {
+        last_slash = wcsrchr(module_path, L'\\');
+        if (last_slash)
+        {
+            *last_slash = L'\0';
+            SetCurrentDirectoryW(module_path);
+        }
+    }
 
     argv_wide = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (!argv_wide)
