@@ -68,7 +68,7 @@ going on in the sndserver that do not receive penalty as
 the program has to do only a simple task. One example would
 be a libc realloc mixed with zone memory allocation. 
 
-Ungraceful and untimely demise of Linuxdoom (core instead
+Ungraceful and untimely demise of QuazzDoom (core instead
 of I_Error) will leave idle sndserver processes in your
 system, blocking /dev/bsp. Kill them manually.
 
@@ -96,7 +96,7 @@ buffer/command buffer as shared memory comes to mind.
 
 3) Music support
 
-There is, and was, no music support in Linuxdoom. Fine with
+There is, and was, no music support in QuazzDoom. Fine with
 me - I wouldn't give a bat's tail feathers for DOOM music.
 Your mileage may vary. There are a few leftovers of the DOS
 music support also interfacing DMX, so there is a place
@@ -105,6 +105,6 @@ recommend getting e.g. Workman to cooperate with DOOM
 (currently, DOOM accessing the soundcard SpekerOut
 interferes with Workman controlling the CD drives
 SpeakerOut), so musci could be chosen and run completely
-independend of the game. You could try Linuxdoom with
+independend of the game. You could try QuazzDoom with
 Q2 music that way.
 

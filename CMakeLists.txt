@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(doom LANGUAGES C)
+project(QuazzDoom LANGUAGES C)
 
-set(DOOM_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/linuxdoom-1.10")
+set(DOOM_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/QuazzDoom")
 
 set(DOOM_COMMON_SOURCES
     ${DOOM_SRC_DIR}/am_map.c

@@ -366,7 +366,7 @@ Fri Dec 19 10:02:48 1997    <bk@gamers.org>
 	  Win32 without getting paid for it.
   
 	  Because of the legal issues involved with the
-	  DMX sound library id licensed for DOS DOOM, Linuxdoom
+	  DMX sound library id licensed for DOS DOOM, QuazzDoom
 	  is the only code base that has sound support at all.
 	  Other UNIX ports (SGI, Sun) could probably be revived
 	  and integrated w/o too many problems. There is no
@@ -380,7 +380,7 @@ Fri Dec 19 10:02:48 1997    <bk@gamers.org>
 	  I have removed all DMX references I could get a
 	  hold of, but preserved some of the original
 	  sound handling within DOOM that interfaced
-	  with DMX. Linuxdoom (like previous UNIX ports)
+	  with DMX. QuazzDoom (like previous UNIX ports)
 	  used a separate sound server binary. I did some
 	  work on putting the sound server module back into
 	  the engine. It works, but shutdown (pending sounds),
@@ -555,7 +555,7 @@ Thu Aug 14 10:38:37 1997    <bk@hal.gamers.org>
 	  respective names change a lot, especially if stuff gets
 	  deleted and/or re-introduced).
 	  Major change: part of the sound code got copied from the
-	  separate Linux sndserver sources to the linuxdoom source.
+	  separate Linux sndserver sources to the QuazzDoom source.
 	  Re-integration and removal of sndserver pending.
 	  Nothing of importance happend since then (priorities).
 

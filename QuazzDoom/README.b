@@ -129,7 +129,7 @@ the shops, it is probably polite not
 to distribute a source or binary without
 that mechanism.
 
-This version of Linuxdoom supports Plutonia
+This version of QuazzDoom supports Plutonia
 and TNT WAD from FinalDOOM as well. No
 guarantees, though.
 

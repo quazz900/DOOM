@@ -114,7 +114,7 @@
    visible at all, but do we care?
 
 
-- Ungraceful and untimely demise of Linuxdoom (core
+- Ungraceful and untimely demise of QuazzDoom (core
    instead of I_Error) will leave idle sndserver
    processes in your system, blocking /dev/bsp.
   A timeout on lack of input for "sndserver"?

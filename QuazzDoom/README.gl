@@ -38,7 +38,7 @@ certainly wasn't taking any advantage of 3D acceleration.
 Once the game was running, I started converting all
 the span routines over."
 
-Comment: for merging Linuxdoom with Win32, this is
+Comment: for merging QuazzDoom with Win32, this is
 probably the best source for getting the Win32
 environment done - before more significant changes
 occur.

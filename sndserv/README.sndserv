@@ -1,6 +1,6 @@
 
 This is the soundserver as used by the original
-Linuxdoom release. I separated the source from
+QuazzDoom release. I separated the source from
 the actual Linuxduum source. For various reasons
 the separate sound process seems to give the
 best results - both synchronous and timer driven
