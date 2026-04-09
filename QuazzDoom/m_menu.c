@@ -239,6 +239,7 @@ void M_DrawSave(void);
 
 void M_DrawSaveLoadBorder(int x,int y);
 void M_SetupNextMenu(menu_t *menudef);
+void M_NormalizeItemOn(menu_t *menudef);
 void M_DrawThermo(int x,int y,int thermWidth,int thermDot);
 void M_DrawEmptyCell(menu_t *menu,int item);
 void M_DrawSelCell(menu_t *menu,int item);
@@ -1880,6 +1881,32 @@ void M_SetupNextMenu(menu_t *menudef)
 {
     currentMenu = menudef;
     itemOn = currentMenu->lastOn;
+    M_NormalizeItemOn(currentMenu);
+}
+
+void M_NormalizeItemOn(menu_t *menudef)
+{
+    int start;
+
+    if (!menudef || menudef->numitems <= 0)
+	return;
+
+    if (itemOn < 0 || itemOn >= menudef->numitems)
+	itemOn = 0;
+
+    if (menudef->menuitems[itemOn].status != -1)
+	return;
+
+    start = itemOn;
+    do
+    {
+	if (++itemOn >= menudef->numitems)
+	    itemOn = 0;
+	if (menudef->menuitems[itemOn].status != -1)
+	    return;
+    } while (itemOn != start);
+
+    itemOn = 0;
 }
 
 
