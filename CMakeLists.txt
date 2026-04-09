@@ -73,20 +73,14 @@ if(WIN32)
         ${DOOM_SRC_DIR}/win_compat.c
     )
 else()
-    set(DOOM_PLATFORM_SOURCES
-        ${DOOM_SRC_DIR}/i_main.c
-        ${DOOM_SRC_DIR}/i_net.c
-        ${DOOM_SRC_DIR}/i_sound.c
-        ${DOOM_SRC_DIR}/i_system.c
-        ${DOOM_SRC_DIR}/i_video.c
-    )
+    message(FATAL_ERROR "QuazzDoom is currently maintained as a Windows-only port.")
 endif()
 
 add_library(doom_core OBJECT ${DOOM_COMMON_SOURCES} ${DOOM_PLATFORM_SOURCES})
 target_include_directories(doom_core PRIVATE ${DOOM_SRC_DIR})
 
 if(WIN32)
-    target_compile_definitions(doom_core PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS NORMALUNIX)
+    target_compile_definitions(doom_core PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS)
     target_compile_options(doom_core PRIVATE /FI${DOOM_SRC_DIR}/doom_win32_compat.h)
 endif()
 

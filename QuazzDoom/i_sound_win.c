@@ -17,9 +17,6 @@
 
 #include "doomdef.h"
 
-FILE *sndserver = 0;
-char *sndserver_filename = "";
-
 #define SAMPLECOUNT 512
 #define NUM_CHANNELS 8
 #define BUFMUL 4

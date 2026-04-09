@@ -1,0 +1,5 @@
+G:/skate5src/DOOM/build-win32/CMakeFiles/doom_core.dir
+G:/skate5src/DOOM/build-win32/CMakeFiles/doom.dir
+G:/skate5src/DOOM/build-win32/CMakeFiles/doom-game.dir
+G:/skate5src/DOOM/build-win32/CMakeFiles/edit_cache.dir
+G:/skate5src/DOOM/build-win32/CMakeFiles/rebuild_cache.dir

@@ -25,12 +25,9 @@
 static const char
 rcsid[] = "$Id: w_wad.c,v 1.5 1997/02/03 16:47:57 b1 Exp $";
 
-
-#ifdef NORMALUNIX
 #include <ctype.h>
 #include <sys/types.h>
 #include <string.h>
-#include <unistd.h>
 #include <malloc.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -38,7 +35,8 @@ rcsid[] = "$Id: w_wad.c,v 1.5 1997/02/03 16:47:57 b1 Exp $";
 #ifndef O_BINARY
 #define O_BINARY		0
 #endif
-#endif
+
+#include "unistd.h"
 
 #include "doomtype.h"
 #include "m_swap.h"
@@ -65,8 +63,6 @@ int			numlumps;
 
 void**			lumpcache;
 
-
-#define strcmpi	strcasecmp
 
 void doom_strupr (char* s)
 {
@@ -171,7 +167,7 @@ void W_AddFile (char *filename)
     printf (" adding %s\n",filename);
     startlump = numlumps;
 	
-    if (strcmpi (filename+strlen(filename)-3 , "wad" ) )
+    if (strcasecmp (filename+strlen(filename)-3 , "wad" ) )
     {
 	// single lump file
 	fileinfo = &singleinfo;

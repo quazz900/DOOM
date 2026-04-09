@@ -97,9 +97,8 @@ extern  boolean	deathmatch;
 	
 // -------------------------
 // Internal parameters for sound rendering.
-// These have been taken from the DOS version,
-//  but are not (yet) supported with Linux
-//  (e.g. no sound volume adjustment with menu.
+// These have been taken from the DOS version
+//  and are carried through by the Windows port.
 
 // These are not used, but should be (menu).
 // From m_menu.c:
@@ -109,10 +108,8 @@ extern  boolean	deathmatch;
 extern int snd_SfxVolume;      // maximum volume for sound
 extern int snd_MusicVolume;    // maximum volume for music
 
-// Current music/sfx card - index useless
-//  w/o a reference LUT in a sound module.
-// Ideally, this would use indices found
-//  in: /usr/include/linux/soundcard.h
+// Current music/sfx device selections.
+// The original code treated these as backend-defined ids.
 extern int snd_MusicDevice;
 extern int snd_SfxDevice;
 // Config file? Same disclaimer as above.
