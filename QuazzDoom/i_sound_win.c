@@ -895,6 +895,21 @@ static unsigned char *CreateWaveData(const unsigned char *samples, int sample_co
 
 static void MusicApplyVolume(void)
 {
+    int channel;
+    int volume;
+
+    if (!music_out_device)
+        return;
+
+    volume = MixerVolumeFromDoom(snd_MusicVolume);
+
+    for (channel = 0; channel < 16; ++channel)
+    {
+        MusicSendShortMessage((unsigned char)(0xB0 | channel), 0x07,
+                              (unsigned char)volume, 1);
+        MusicSendShortMessage((unsigned char)(0xB0 | channel), 0x0B,
+                              (unsigned char)volume, 1);
+    }
 }
 
 static void MusicStopPlayback(void)
