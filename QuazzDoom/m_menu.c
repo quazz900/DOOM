@@ -1799,18 +1799,21 @@ void M_Drawer (void)
 	y = 100 - M_StringHeight(messageString)/2;
 	while(*(messageString+start))
 	{
+	    memset(string,0,sizeof(string));
 	    for (i = 0;i < strlen(messageString+start);i++)
 		if (*(messageString+start+i) == '\n')
 		{
-		    memset(string,0,40);
-		    strncpy(string,messageString+start,i);
+		    int copy_len = i;
+		    if (copy_len > (int)sizeof(string) - 1)
+			copy_len = (int)sizeof(string) - 1;
+		    memcpy(string,messageString+start,copy_len);
 		    start += i+1;
 		    break;
 		}
 				
 	    if (i == strlen(messageString+start))
 	    {
-		strcpy(string,messageString+start);
+		strncpy(string,messageString+start,sizeof(string)-1);
 		start += i;
 	    }
 				
